@@ -1,0 +1,59 @@
+using System.Runtime.InteropServices;
+
+namespace DesktopDock.App;
+
+internal static class Native
+{
+    internal const int RecoverMessage = 0x8007;
+    [StructLayout(LayoutKind.Sequential)] internal struct Point { public int X, Y; }
+    [StructLayout(LayoutKind.Sequential)] internal struct Rect { public int Left, Top, Right, Bottom; }
+    [StructLayout(LayoutKind.Sequential)] internal struct QueueOptions { public int Size, ThreadType, ApartmentType; }
+    [StructLayout(LayoutKind.Sequential)] internal struct MouseTrack { public int Size, Flags; public nint Hwnd; public uint HoverTime; }
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    internal struct ShellFileInfo
+    {
+        public nint Icon; public int IconIndex; public uint Attributes;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)] public string DisplayName;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 80)] public string TypeName;
+    }
+    internal delegate bool EnumCallback(nint hwnd, nint data);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] internal static extern nint FindWindow(string? className, string? title);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] internal static extern nint FindWindowEx(nint parent, nint after, string? className, string? title);
+    [DllImport("user32.dll")] internal static extern bool EnumWindows(EnumCallback callback, nint data);
+    [DllImport("user32.dll")] internal static extern bool IsWindowVisible(nint hwnd);
+    [DllImport("user32.dll")] internal static extern bool ShowWindow(nint hwnd, int command);
+    [DllImport("user32.dll")] internal static extern bool SetWindowPos(nint hwnd, nint insertAfter, int x, int y, int width, int height, uint flags);
+    [DllImport("user32.dll")] internal static extern bool TrackMouseEvent(ref MouseTrack track);
+    [DllImport("user32.dll")] internal static extern bool GetCursorPos(out Point point);
+    [DllImport("user32.dll")] internal static extern bool ScreenToClient(nint hwnd, ref Point point);
+    [DllImport("user32.dll")] internal static extern bool GetWindowRect(nint hwnd, out Rect rect);
+    [DllImport("user32.dll")] internal static extern uint GetDpiForWindow(nint hwnd);
+    [DllImport("user32.dll")] internal static extern nint GetForegroundWindow();
+    [DllImport("user32.dll")] internal static extern bool SetForegroundWindow(nint hwnd);
+    [DllImport("user32.dll")] internal static extern bool IsIconic(nint hwnd);
+    [DllImport("user32.dll")] internal static extern bool IsZoomed(nint hwnd);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] internal static extern int GetClassName(nint hwnd, System.Text.StringBuilder text, int max);
+    [DllImport("user32.dll")] internal static extern nint WindowFromPoint(Point point);
+    [DllImport("user32.dll")] internal static extern int SetWindowRgn(nint hwnd, nint region, bool redraw);
+    [DllImport("user32.dll")] internal static extern int GetWindowRgn(nint hwnd, nint region);
+    [DllImport("gdi32.dll")] internal static extern nint CreateRectRgn(int left, int top, int right, int bottom);
+    [DllImport("gdi32.dll")] internal static extern nint CreateRoundRectRgn(int left, int top, int right, int bottom, int widthEllipse, int heightEllipse);
+    [DllImport("gdi32.dll")] internal static extern int CombineRgn(nint dest, nint first, nint second, int mode);
+    [DllImport("gdi32.dll")] internal static extern bool DeleteObject(nint obj);
+    [DllImport("gdi32.dll")] internal static extern bool PtInRegion(nint region, int x, int y);
+    [DllImport("user32.dll")] internal static extern uint GetWindowThreadProcessId(nint hwnd, out uint process);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] internal static extern int GetWindowText(nint hwnd, System.Text.StringBuilder text, int max);
+    [DllImport("user32.dll")] internal static extern nint GetWindow(nint hwnd, uint command);
+    [DllImport("user32.dll")] internal static extern bool PostMessage(nint hwnd, int message, nint wparam, nint lparam);
+    [DllImport("user32.dll")] internal static extern nint SetCapture(nint hwnd);
+    [DllImport("user32.dll")] internal static extern bool ReleaseCapture();
+    [DllImport("dwmapi.dll")] internal static extern int DwmSetWindowAttribute(nint hwnd, int attribute, ref int value, int size);
+    [DllImport("dwmapi.dll")] internal static extern int DwmGetWindowAttribute(nint hwnd, int attribute, out Rect value, int size);
+    [DllImport("CoreMessaging.dll")] internal static extern int CreateDispatcherQueueController(QueueOptions options, out nint queue);
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode)] internal static extern nint SHGetFileInfo(string path, uint attributes, out ShellFileInfo info, uint size, uint flags);
+    [DllImport("shell32.dll")] internal static extern int SHGetImageList(int size, ref Guid iid, out nint imageList);
+    [DllImport("user32.dll")] internal static extern bool DestroyIcon(nint icon);
+    [DllImport("user32.dll")] internal static extern nint SetWinEventHook(uint eventMin, uint eventMax, nint module, WinEvent callback, uint process, uint thread, uint flags);
+    [DllImport("user32.dll")] internal static extern bool UnhookWinEvent(nint hook);
+    internal delegate void WinEvent(nint hook, uint eventType, nint hwnd, int objectId, int childId, uint thread, uint time);
+}

@@ -8,6 +8,9 @@
 *.yml text eol=lf
 *.yaml text eol=lf
 *.ps1 text eol=crlf
+*.cmd text eol=crlf
+*.props text eol=lf
+*.slnx text eol=lf
 *.png binary
 *.jpg binary
 *.jpeg binary
