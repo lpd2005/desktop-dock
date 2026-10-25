@@ -31,6 +31,7 @@ internal static class Native
     [DllImport("user32.dll")] internal static extern uint GetDpiForWindow(nint hwnd);
     [DllImport("user32.dll")] internal static extern nint GetForegroundWindow();
     [DllImport("user32.dll")] internal static extern bool SetForegroundWindow(nint hwnd);
+    [DllImport("user32.dll")] internal static extern bool AllowSetForegroundWindow(uint process);
     [DllImport("user32.dll")] internal static extern bool IsIconic(nint hwnd);
     [DllImport("user32.dll")] internal static extern bool IsWindow(nint hwnd);
     [DllImport("user32.dll")] internal static extern bool IsZoomed(nint hwnd);
@@ -47,6 +48,12 @@ internal static class Native
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] internal static extern int GetWindowText(nint hwnd, System.Text.StringBuilder text, int max);
     [DllImport("user32.dll")] internal static extern nint GetWindow(nint hwnd, uint command);
     [DllImport("user32.dll")] internal static extern bool PostMessage(nint hwnd, int message, nint wparam, nint lparam);
+    [DllImport("user32.dll", SetLastError = true)] internal static extern bool RegisterHotKey(nint hwnd, int id, uint modifiers, uint key);
+    [DllImport("user32.dll")] internal static extern bool UnregisterHotKey(nint hwnd, int id);
+    [DllImport("user32.dll")] internal static extern short GetAsyncKeyState(int key);
+    [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")] internal static extern nint GetWindowLongPtr(nint hwnd, int index);
+    [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")] internal static extern nint SetWindowLongPtr(nint hwnd, int index, nint value);
+    [DllImport("user32.dll")] internal static extern nint GetAncestor(nint hwnd, uint flags);
     [DllImport("user32.dll")] internal static extern nint SetCapture(nint hwnd);
     [DllImport("user32.dll")] internal static extern bool ReleaseCapture();
     [DllImport("dwmapi.dll")] internal static extern int DwmSetWindowAttribute(nint hwnd, int attribute, ref int value, int size);

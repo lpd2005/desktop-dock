@@ -19,6 +19,9 @@ internal sealed class DockWindow : IDisposable
     private readonly Action openSettings, changed, recover, quit;
     private readonly Action toggleSettings;
     private readonly LaunchCoordinator launcher;
+    private readonly WindowOcclusion occlusion;
+    private readonly RecallHotkey hotkey;
+    private readonly DockVisibility visibility = new();
     private readonly DispatcherTimer visibilityTimer;
     private readonly DispatcherTimer labelTimer;
     private readonly AnimationClock animationClock;
@@ -35,12 +38,14 @@ internal sealed class DockWindow : IDisposable
     private List<DockItem> entries = [];
     private float scale = 1;
     private int width, height, top, left, separatorBefore = -1;
-    private bool tracking, autoHidden, blocked, disposed, rendering, eventPending;
+    private bool tracking, autoHidden, disposed, rendering, eventPending;
+    private bool blocked = true, occlusionDirty = true, cachedOccluded;
+    private double lastOcclusionScan;
+    private bool? switchingForChecks;
+    private Native.Point lastMouse;
     private bool syntheticHover;
     private double pointerTarget, lastFrame, lastPresence, edgeSince = -1;
     private int pressedIndex = -1, hoveredIndex = -1, loadGeneration;
-    private int feedbackIndex = -1;
-    private double feedbackStarted;
     private Native.Point pressedPoint;
     private ContextMenu? context;
     public nint Handle => source.Handle;
@@ -51,23 +56,28 @@ internal sealed class DockWindow : IDisposable
     public bool HighResolutionClock => animationClock.HighResolution;
     public IReadOnlyList<double> FrameIntervals => frameIntervals;
     public bool LaunchWatcherActive => launcher.IsWatching;
-    internal nint LastLaunchCandidate => launcher.LastCandidate;
-    internal bool LastLaunchFitAccepted => launcher.LastFitAccepted;
+    public string RecallShortcut => hotkey.Label;
+    public bool HotkeyRegistered => hotkey.Registered;
+    public bool IsDockVisible => !blocked && !autoHidden && Native.IsWindowVisible(Handle);
+    internal AppClickAction LastAppAction => launcher.LastAction;
+    internal nint LastAppWindow => launcher.LastWindow;
 
-    public DockWindow(DockSettings settings, Action openSettings, Action changed, Action recover, Action quit, bool inspectable = false, Action? toggleSettings = null)
+    public DockWindow(DockSettings settings, Action openSettings, Action changed, Action recover, Action quit, Action? toggleSettings = null)
     {
         this.settings = settings; this.openSettings = openSettings; this.changed = changed;
         this.recover = recover; this.quit = quit;
         this.toggleSettings = toggleSettings ?? openSettings;
-        launcher = new(settings, () => AvailableWindowArea);
+        launcher = new();
         source = new HwndSource(new HwndSourceParameters("Desktop Dock")
         {
             WindowStyle = unchecked((int)0x80000000),
-            ExtendedWindowStyle = 0x00200000 | 0x08000000 | (inspectable ? 0x00040000 : 0x00000080) | 0x00000008,
+            ExtendedWindowStyle = 0x00200000 | 0x08000000 | 0x00000080 | 0x00000008,
             Width = 900, Height = 190
         });
         source.CompositionTarget.BackgroundColor = Colors.Transparent;
         source.AddHook(Message);
+        occlusion = new(Handle);
+        hotkey = new(Handle);
         region = new(Handle);
         region.Update([], 1); // Never expose an unshaped screen-wide input window, including during startup.
         int enable = 1;
@@ -86,11 +96,14 @@ internal sealed class DockWindow : IDisposable
         windowEvent = (_, _, hwnd, objectId, _, _, _) =>
         {
             if (disposed || hwnd == Handle || objectId != 0 || eventPending) return;
+            occlusionDirty = true;
             eventPending = true;
             source.Dispatcher.BeginInvoke(() => { eventPending = false; if (!disposed) CheckVisibility(); }, DispatcherPriority.Background);
         };
-        hooks.Add(Native.SetWinEventHook(3, 3, 0, windowEvent, 0, 0, 2)); // Foreground, skip own process.
-        hooks.Add(Native.SetWinEventHook(0x800B, 0x800B, 0, windowEvent, 0, 0, 2)); // Resize/move.
+        hooks.Add(Native.SetWinEventHook(3, 3, 0, windowEvent, 0, 0, 0)); // Foreground changes.
+        hooks.Add(Native.SetWinEventHook(0x800B, 0x800B, 0, windowEvent, 0, 0, 0));
+        hooks.Add(Native.SetWinEventHook(0x8000, 0x8003, 0, windowEvent, 0, 0, 0));
+        hooks.Add(Native.SetWinEventHook(0x0016, 0x0017, 0, windowEvent, 0, 0, 0)); // Minimize start/end.
         Reposition();
         visibilityTimer.Start();
     }
@@ -107,6 +120,7 @@ internal sealed class DockWindow : IDisposable
         renderer.ClearIcons();
         foreach (var bytes in pixels) renderer.AddIcon(bytes);
         hover.Reset(0);
+        occlusionDirty = true;
         RenderLayout();
         CheckVisibility();
     }
@@ -127,6 +141,7 @@ internal sealed class DockWindow : IDisposable
         left = screen.WorkingArea.Left;
         top = screen.WorkingArea.Bottom - height - (int)(settings.BottomGap * scale);
         autoHidden = false;
+        occlusionDirty = true;
         hover.Reset(0);
         Native.SetWindowPos(Handle, new(-1), left, top, width, height, 0x0010);
         RenderLayout();
@@ -136,16 +151,8 @@ internal sealed class DockWindow : IDisposable
     private void RenderLayout()
     {
         if (entries.Count == 0) return;
-        if (settings.ReducedMotion || !settings.LaunchAnimation) feedbackIndex = -1;
         geometry = DockLayout.Calculate(entries.Count, settings.IconSize, settings.Magnification,
             hover.Value > 0 ? pointer.Value : null, width / scale, hover.Value, separatorBefore);
-        if (feedbackIndex >= 0 && feedbackIndex < geometry.Slots.Length)
-        {
-            double elapsed = clock.Elapsed.TotalSeconds - feedbackStarted;
-            if (elapsed < LaunchFeedback.Duration)
-                geometry.Slots[feedbackIndex] = geometry.Slots[feedbackIndex] with { Lift = LaunchFeedback.Lift(elapsed) };
-            else feedbackIndex = -1;
-        }
         renderer.Layout(geometry, width, height, scale);
         footprint = DockFootprint.Create(geometry, width / scale, height / scale);
         if (!autoHidden && !blocked) region.Update(footprint, scale);
@@ -177,7 +184,6 @@ internal sealed class DockWindow : IDisposable
         active |= hover.Step(present ? 1 : 0, dt, present ? 36 : 29);
         if (settings.ReducedMotion) { pointer.Reset(pointerTarget); hover.Reset(present ? 1 : 0); active = false; }
         RenderLayout();
-        active |= feedbackIndex >= 0;
         if (frameIntervals.Count < 5000) frameIntervals.Add(dt * 1000);
         if (!active) StopRendering();
     }
@@ -200,8 +206,14 @@ internal sealed class DockWindow : IDisposable
             case 0x0084:
                 // The OS region performs cross-process hit exclusion. No reliance on HTTRANSPARENT.
                 handled = true; return 1;
+            case 0x0312:
+                if (wparam.ToInt32() == RecallHotkey.Id) { Summon(); handled = true; }
+                break;
+            case 0x020A:
+            case 0x020E: NoteInteraction(); break;
             case 0x0200:
                 if (blocked) break;
+                if (x != lastMouse.X || y != lastMouse.Y) { NoteInteraction(); lastMouse = new() { X = x, Y = y }; }
                 if (!tracking)
                 {
                     var track = new Native.MouseTrack { Size = System.Runtime.InteropServices.Marshal.SizeOf<Native.MouseTrack>(), Flags = 2, Hwnd = hwnd };
@@ -224,11 +236,13 @@ internal sealed class DockWindow : IDisposable
                 if (pressedIndex < 0) StartRendering();
                 break;
             case 0x0201:
+                NoteInteraction();
                 label.IsOpen = false;
                 pressedIndex = HitIndex(x, y); pressedPoint = new() { X = x, Y = y };
                 if (pressedIndex >= 0) Native.SetCapture(hwnd);
                 break;
             case 0x0202:
+                NoteInteraction();
                 int released = HitIndex(x, y), pressed = pressedIndex;
                 pressedIndex = -1;
                 Native.ReleaseCapture();
@@ -241,7 +255,7 @@ internal sealed class DockWindow : IDisposable
                 else if (pressed >= 0 && pressed == released && !moved) Launch(entries[released]);
                 break;
             case 0x0215: pressedIndex = -1; break;
-            case 0x0205: ShowMenu(HitIndex(x, y)); break;
+            case 0x0205: NoteInteraction(); ShowMenu(HitIndex(x, y)); break;
             case 0x007E:
             case 0x02E0: source.Dispatcher.BeginInvoke(Reposition); break;
             case Native.RecoverMessage: recover(); break;
@@ -261,17 +275,13 @@ internal sealed class DockWindow : IDisposable
         label.IsOpen = true;
     }
 
-    private void Launch(DockItem item)
+    private void Launch(DockItem item, bool toggle = true)
     {
-        if (item.Target == "dock:settings") { toggleSettings(); return; }
+        NoteInteraction();
+        if (item.Target == "dock:settings") { if (toggle) toggleSettings(); else openSettings(); return; }
         try
         {
-            if (settings.LaunchAnimation && !settings.ReducedMotion)
-            {
-                feedbackIndex = entries.IndexOf(item); feedbackStarted = clock.Elapsed.TotalSeconds;
-                StartRendering();
-            }
-            launcher.Launch(item);
+            launcher.Launch(item, toggle);
         }
         catch (Exception e) when (e is System.ComponentModel.Win32Exception or InvalidOperationException)
         { System.Windows.MessageBox.Show("无法打开这个入口，请检查目标是否仍然存在。", "Desktop Dock"); }
@@ -281,9 +291,11 @@ internal sealed class DockWindow : IDisposable
     {
         label.IsOpen = false;
         context = new ContextMenu();
+        context.PreviewMouseMove += (_, _) => NoteInteraction();
+        context.PreviewKeyDown += (_, _) => NoteInteraction();
         if (index >= 0 && index < settings.Items.Count)
         {
-            AddMenu("打开 " + settings.Items[index].Name, () => Launch(settings.Items[index]));
+            AddMenu("打开 " + settings.Items[index].Name, () => Launch(settings.Items[index], false));
             AddMenu("从 Dock 移除", () => { settings.Items.RemoveAt(index); changed(); _ = LoadIcons(); });
             context.Items.Add(new Separator());
         }
@@ -299,43 +311,40 @@ internal sealed class DockWindow : IDisposable
     private void AddMenu(string title, Action action)
     {
         var menu = new MenuItem { Header = title };
-        menu.Click += (_, _) => action(); context!.Items.Add(menu);
+        menu.Click += (_, _) => { NoteInteraction(); action(); }; context!.Items.Add(menu);
     }
 
     public void CheckVisibility()
     {
         if (disposed) return;
-        nint foreground = Native.GetForegroundWindow();
-        if (foreground == 0) return;
-        Native.GetWindowThreadProcessId(foreground, out uint process);
-        bool nextBlocked = false;
-        if (process != Environment.ProcessId && Native.IsWindowVisible(foreground) && !Native.IsIconic(foreground))
+        double now = clock.Elapsed.TotalSeconds;
+        if (occlusionDirty || now - lastOcclusionScan >= 1)
         {
-            var name = new StringBuilder(128);
-            Native.GetClassName(foreground, name, name.Capacity);
-            if (name.ToString() is not ("Progman" or "WorkerW" or "Shell_TrayWnd" or "Shell_SecondaryTrayWnd"))
-            {
-                if (Native.DwmGetWindowAttribute(foreground, 9, out var bounds, System.Runtime.InteropServices.Marshal.SizeOf<Native.Rect>()) != 0)
-                    Native.GetWindowRect(foreground, out bounds);
-                var screen = Forms.Screen.PrimaryScreen!.Bounds;
-                nextBlocked = WindowAvoidance.ShouldHide(new(bounds.Left, bounds.Top, bounds.Right, bounds.Bottom),
-                    new(screen.Left, screen.Top, screen.Right, screen.Bottom), Native.IsZoomed(foreground), settings.HideWhenMaximized);
-            }
+            cachedOccluded = occlusion.Covered(RestDockArea);
+            occlusionDirty = false; lastOcclusionScan = now;
         }
-        if (nextBlocked != blocked)
+        bool switching = switchingForChecks ?? ((Native.GetAsyncKeyState(0x12) & 0x8000) != 0
+            && ((Native.GetAsyncKeyState(0x11) & 0x8000) == 0 || (Native.GetAsyncKeyState(0x09) & 0x8000) != 0));
+        bool show = entries.Count > 0 && visibility.ShouldShow(cachedOccluded, switching, now);
+        if (!show)
         {
-            blocked = nextBlocked;
-            if (blocked)
+            if (!blocked || Native.IsWindowVisible(Handle))
             {
-                label.IsOpen = false; StopRendering(); hover.Reset(0); Native.ShowWindow(Handle, 0);
+                blocked = true; autoHidden = false; StopRendering(); hover.Reset(0); label.IsOpen = false;
+                if (context is not null) context.IsOpen = false;
+                Native.ShowWindow(Handle, 0);
             }
-            else
-            {
-                autoHidden = false; Native.SetWindowPos(Handle, new(-1), left, top, width, height, 0x0010 | 0x0040);
-                RenderLayout();
-            }
+            return;
         }
-        if (blocked) return;
+        if (blocked)
+        {
+            blocked = false; autoHidden = false;
+            Native.SetWindowPos(Handle, new(-1), left, top, width, height, 0x0010);
+            RenderLayout();
+            Native.ShowWindow(Handle, 8);
+            lastPresence = now;
+        }
+        if (visibility.IsTemporarilyShown) { SetAutoHidden(false); return; }
         if (!settings.AutoHide)
         {
             SetAutoHidden(false);
@@ -344,7 +353,6 @@ internal sealed class DockWindow : IDisposable
         }
         if (context?.IsOpen == true || pressedIndex >= 0) return;
         Native.GetCursorPos(out var cursor);
-        double now = clock.Elapsed.TotalSeconds;
         var rest = DockLayout.Calculate(entries.Count, settings.IconSize, settings.Magnification, null, width / scale, separatorBefore: separatorBefore);
         double centerLeft = left + rest.BodyLeft(width / scale) * scale;
         bool atEdge = cursor.X >= centerLeft && cursor.X <= centerLeft + rest.Width * scale
@@ -359,6 +367,26 @@ internal sealed class DockWindow : IDisposable
         {
             if (IsPointerOverDock()) lastPresence = now;
             if (now - lastPresence > .5) SetAutoHidden(true);
+        }
+    }
+
+    public void Summon()
+    {
+        visibility.Summon(clock.Elapsed.TotalSeconds);
+        occlusionDirty = true;
+        CheckVisibility();
+    }
+    private void NoteInteraction() => visibility.Interact(clock.Elapsed.TotalSeconds);
+    public void RefreshOcclusion() { occlusionDirty = true; CheckVisibility(); }
+
+    private WindowBounds RestDockArea
+    {
+        get
+        {
+            var rest = DockLayout.Calculate(entries.Count, settings.IconSize, settings.Magnification, null, width / scale, separatorBefore: separatorBefore);
+            int x = left + (int)(rest.BodyLeft(width / scale) * scale);
+            return new(x, top + (int)(rest.BodyTop(height / scale) * scale), x + (int)(rest.Width * scale),
+                top + height - (int)(DockGeometry.Foot * scale));
         }
     }
 
@@ -382,6 +410,7 @@ internal sealed class DockWindow : IDisposable
 
     public void PreviewWave(double fraction = .5)
     {
+        NoteInteraction();
         syntheticHover = true;
         var rest = DockLayout.Calculate(entries.Count, settings.IconSize, settings.Magnification, null, width / scale, separatorBefore: separatorBefore);
         pointerTarget = rest.BodyLeft(width / scale) + rest.Width * fraction;
@@ -391,20 +420,13 @@ internal sealed class DockWindow : IDisposable
     public void ResetWave() { syntheticHover = false; StartRendering(); }
     public void ClearFrameSamples() => frameIntervals.Clear();
 
-    public WindowBounds AvailableWindowArea
-    {
-        get
-        {
-            var screen = Forms.Screen.PrimaryScreen!.WorkingArea;
-            var rest = DockLayout.Calculate(entries.Count, settings.IconSize, settings.Magnification, null, width / scale, separatorBefore: separatorBefore);
-            double reserve = settings.BottomGap + 8 + Math.Max(DockGeometry.Foot + rest.IconSize + 22,
-                DockGeometry.Foot + DockGeometry.IconInset + rest.IconSize * settings.Magnification);
-            return new(screen.Left, screen.Top, screen.Right, Math.Max(screen.Top + 200, screen.Bottom - (int)Math.Ceiling(reserve * scale)));
-        }
-    }
-
     internal void InvokeSettingsEntry() => Launch(new("Dock 设置", "dock:settings"));
     internal void LaunchForCheck(DockItem item) => Launch(item);
+    internal void UseOcclusionWindowsForChecks(Func<IEnumerable<nint>> source) { occlusion.WindowsForChecks = source; RefreshOcclusion(); }
+    internal void SetSwitchingForChecks(bool? value) { switchingForChecks = value; CheckVisibility(); }
+    internal void InteractForChecks() => NoteInteraction();
+    internal void InvokeHotkeyForChecks() => Native.PostMessage(Handle, 0x0312, RecallHotkey.Id, 0);
+    internal bool ExcludedFromAltTab => (Native.GetWindowLongPtr(Handle, -20).ToInt64() & (0x80 | 0x40000)) == 0x80;
 
     public InputRegionReport VerifyInputRegion()
     {
@@ -433,7 +455,7 @@ internal sealed class DockWindow : IDisposable
         disposed = true; StopRendering(); visibilityTimer.Stop(); labelTimer.Stop(); label.IsOpen = false;
         foreach (nint hook in hooks) if (hook != 0) Native.UnhookWinEvent(hook);
         context?.SetCurrentValue(ContextMenu.IsOpenProperty, false);
-        launcher.Dispose(); animationClock.Dispose(); renderer.Dispose(); source.Dispose();
+        hotkey.Dispose(); launcher.Dispose(); animationClock.Dispose(); renderer.Dispose(); source.Dispose();
     }
 }
 

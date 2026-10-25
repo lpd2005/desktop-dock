@@ -11,12 +11,9 @@ public sealed class DockSettings
     public double BottomGap { get; set; } = 12;
     public bool Blur { get; set; } = true;
     public bool LightTheme { get; set; } = true;
-    public bool HideWhenMaximized { get; set; } = true;
     public bool HideDesktopIcons { get; set; }
     public bool AutoHide { get; set; }
     public bool ReducedMotion { get; set; }
-    public bool LaunchAnimation { get; set; } = true;
-    public bool KeepLaunchedWindowsAboveDock { get; set; } = true;
     public List<DockItem> Items { get; set; } = [];
 
     public void Normalize()

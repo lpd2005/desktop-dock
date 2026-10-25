@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.IO;
 using System.Windows.Threading;
 using DesktopDock.Core;
 
@@ -7,90 +6,102 @@ namespace DesktopDock.App;
 
 internal sealed class LaunchCoordinator : IDisposable
 {
-    private readonly DockSettings settings;
-    private readonly Func<WindowBounds> available;
+    private sealed record BoundWindow(nint Handle, uint Process);
+    private readonly Dictionary<string, ApplicationTarget> targets = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, BoundWindow> bound = new(StringComparer.OrdinalIgnoreCase);
     private readonly DispatcherTimer timer;
     private readonly Stopwatch watch = Stopwatch.StartNew();
-    private string? hint;
+    private ApplicationTarget? pendingTarget;
+    private string pendingKey = "";
     private uint launchedProcess;
     private HashSet<nint> previous = [];
-    private double deadline, candidateSince;
-    private nint candidate;
-    private nint launchForeground;
     private double started;
+    private nint launchForeground;
     public bool IsWatching => timer.IsEnabled;
-    public nint LastCandidate { get; private set; }
-    public bool LastFitAccepted { get; private set; }
+    public AppClickAction LastAction { get; private set; }
+    public nint LastWindow { get; private set; }
 
-    public LaunchCoordinator(DockSettings settings, Func<WindowBounds> available)
+    public LaunchCoordinator()
     {
-        this.settings = settings; this.available = available;
         timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(100) };
         timer.Tick += (_, _) => Poll();
     }
 
-    public void Launch(DockItem item)
+    public void Launch(DockItem item, bool toggle = true)
     {
-        timer.Stop(); candidate = 0; LastCandidate = 0; LastFitAccepted = false;
-        launchForeground = Native.GetForegroundWindow();
-        string target = Environment.ExpandEnvironmentVariables(item.Target);
-        hint = target.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ? Path.GetFileNameWithoutExtension(target)
-            : target.StartsWith("ms-settings:", StringComparison.OrdinalIgnoreCase) ? "SystemSettings"
-            : target.StartsWith("microsoft-edge:", StringComparison.OrdinalIgnoreCase) ? "msedge"
-            : Directory.Exists(target) || target.StartsWith("shell:", StringComparison.OrdinalIgnoreCase) ? "explorer" : null;
+        timer.Stop();
+        string key = item.Target + "\n" + item.Arguments;
+        if (targets.Count > 100) { targets.Clear(); bound.Clear(); }
+        if (!targets.TryGetValue(key, out var info)) targets[key] = info = ApplicationTarget.Resolve(item.Target, item.Arguments);
         var windows = Windows();
-        // Folder requests must still navigate to the requested folder.
-        nint existing = string.IsNullOrWhiteSpace(item.Arguments) && hint is not null && !hint.Equals("explorer", StringComparison.OrdinalIgnoreCase)
-            ? windows.FirstOrDefault(hwnd => Matches(hwnd, 0, hint)) : 0;
+        nint foreground = Native.GetAncestor(Native.GetForegroundWindow(), 3);
+        nint cached = 0;
+        if (bound.TryGetValue(key, out var old) && windows.Contains(old.Handle))
+        {
+            Native.GetWindowThreadProcessId(old.Handle, out uint pid);
+            if (pid == old.Process) cached = old.Handle;
+        }
+        // A URL, folder or argument-specific shortcut uses its associated window after its first launch.
+        var matches = info.SpecificWindow ? new List<nint>() : windows.Where(hwnd => Matches(hwnd, 0, info)).ToList();
+        nint existing = cached != 0 ? cached : matches.FirstOrDefault();
+        if (matches.Contains(foreground)) existing = foreground;
         if (existing != 0)
         {
-            Native.ShowWindowAsync(existing, Native.IsIconic(existing) ? 9 : 5);
-            Native.SetForegroundWindow(existing);
-            if (settings.KeepLaunchedWindowsAboveDock) BeginWatch(0, windows, existing);
+            LastWindow = existing;
+            LastAction = AppClick.Decide(true, existing == foreground, Native.IsIconic(existing), toggle);
+            Native.GetWindowThreadProcessId(existing, out uint pid);
+            bound[key] = new(existing, pid);
+            if (LastAction == AppClickAction.Minimize) Native.ShowWindowAsync(existing, 6);
+            else
+            {
+                Native.ShowWindowAsync(existing, LastAction == AppClickAction.Restore ? 9 : 5);
+                Native.SetForegroundWindow(existing);
+            }
             return;
         }
-        using var process = Process.Start(new ProcessStartInfo(target, item.Arguments) { UseShellExecute = true });
-        if (settings.KeepLaunchedWindowsAboveDock) BeginWatch(process is null ? 0 : (uint)process.Id, windows, 0);
-    }
-
-    private void BeginWatch(uint process, HashSet<nint> before, nint initial)
-    {
-        launchedProcess = process; previous = before; candidate = initial;
-        candidateSince = watch.Elapsed.TotalSeconds;
-        started = candidateSince;
-        deadline = candidateSince + 5;
-        if (process == 0 && hint is null && initial == 0) return;
-        timer.Start();
+        LastAction = AppClickAction.Launch; LastWindow = 0;
+        launchForeground = Native.GetForegroundWindow();
+        using var process = Process.Start(new ProcessStartInfo(Environment.ExpandEnvironmentVariables(item.Target), item.Arguments) { UseShellExecute = true });
+        pendingKey = key; pendingTarget = info; previous = windows.ToHashSet();
+        launchedProcess = process is null ? 0 : (uint)process.Id;
+        started = watch.Elapsed.TotalSeconds;
+        if (launchedProcess != 0 || info.ProcessName is not null || info.AppId is not null) timer.Start();
     }
 
     private void Poll()
     {
-        double now = watch.Elapsed.TotalSeconds;
-        if (now > deadline) { timer.Stop(); return; }
-        if (candidate == 0 || !Native.IsWindow(candidate))
+        double elapsed = watch.Elapsed.TotalSeconds - started;
+        if (elapsed > 5) { StopWatch(); return; }
+        var windows = Windows();
+        nint candidate = launchedProcess == 0 ? 0 : windows.FirstOrDefault(hwnd => !previous.Contains(hwnd) && Matches(hwnd, launchedProcess, null));
+        if (candidate == 0 && pendingTarget is not null)
         {
-            nint foreground = Native.GetForegroundWindow();
-            var windows = Windows();
-            candidate = launchedProcess == 0 ? 0 : windows.FirstOrDefault(hwnd => !previous.Contains(hwnd) && Matches(hwnd, launchedProcess, null));
-            if (candidate == 0 && now - started > .8 && windows.Contains(foreground)
-                && (foreground != launchForeground || string.Equals(hint, "explorer", StringComparison.OrdinalIgnoreCase))
-                && Matches(foreground, launchedProcess, hint)) candidate = foreground;
-            candidateSince = now;
+            candidate = windows.FirstOrDefault(hwnd => !previous.Contains(hwnd) && Matches(hwnd, 0, pendingTarget));
+            nint foreground = Native.GetAncestor(Native.GetForegroundWindow(), 3);
+            if (candidate == 0 && elapsed > .8 && windows.Contains(foreground)
+                && (foreground != launchForeground || pendingTarget.ProcessName == "explorer") && Matches(foreground, 0, pendingTarget))
+                candidate = foreground;
         }
-        if (candidate == 0 || now - candidateSince < .18) return;
-        LastCandidate = candidate;
-        LastFitAccepted = AppWindowPlacement.FitAboveDock(candidate, available());
-        // A brief second pass allows the app to finish applying its own startup layout.
-        if (now - candidateSince > .55) timer.Stop();
+        if (candidate == 0) return;
+        Native.GetWindowThreadProcessId(candidate, out uint pid);
+        bound[pendingKey] = new(candidate, pid);
+        LastWindow = candidate;
+        StopWatch();
     }
 
-    internal static HashSet<nint> Windows()
+    private void StopWatch() { timer.Stop(); previous.Clear(); pendingTarget = null; }
+
+    internal static List<nint> Windows()
     {
-        var result = new HashSet<nint>();
+        var result = new List<nint>();
         Native.EnumWindows((hwnd, _) =>
         {
             if (!Native.IsWindowVisible(hwnd) || Native.GetWindow(hwnd, 4) != 0) return true;
+            Native.GetWindowThreadProcessId(hwnd, out uint pid);
+            if (pid == Environment.ProcessId) return true;
             if (Native.DwmGetIntAttribute(hwnd, 14, out int cloaked, sizeof(int)) == 0 && cloaked != 0) return true;
+            long style = Native.GetWindowLongPtr(hwnd, -20).ToInt64();
+            if ((style & (0x80 | 0x08000000)) != 0) return true;
             Native.GetWindowRect(hwnd, out var rect);
             if (Native.IsIconic(hwnd) || rect.Right - rect.Left >= 160 && rect.Bottom - rect.Top >= 100) result.Add(hwnd);
             return true;
@@ -98,15 +109,22 @@ internal sealed class LaunchCoordinator : IDisposable
         return result;
     }
 
-    private static bool Matches(nint hwnd, uint expectedPid, string? expectedName)
+    private static bool Matches(nint hwnd, uint expectedPid, ApplicationTarget? info)
     {
         Native.GetWindowThreadProcessId(hwnd, out uint pid);
         if (pid == Environment.ProcessId) return false;
         if (expectedPid != 0 && pid == expectedPid) return true;
-        if (expectedName is null) return false;
-        try { using var process = Process.GetProcessById((int)pid); return expectedName.Equals(process.ProcessName, StringComparison.OrdinalIgnoreCase); }
+        if (info is null) return false;
+        if (info.AppId is not null)
+        {
+            string? id = WindowAppId.Read(hwnd);
+            if (!string.IsNullOrEmpty(id)) return info.AppId.Equals(id, StringComparison.OrdinalIgnoreCase);
+            if (info.ProcessName == "explorer") return false;
+        }
+        if (info.ProcessName is null) return false;
+        try { using var process = Process.GetProcessById((int)pid); return info.ProcessName.Equals(process.ProcessName, StringComparison.OrdinalIgnoreCase); }
         catch (Exception e) when (e is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception) { return false; }
     }
 
-    public void Dispose() => timer.Stop();
+    public void Dispose() => StopWatch();
 }

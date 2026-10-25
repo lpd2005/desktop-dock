@@ -14,12 +14,14 @@ namespace DesktopDock.App;
 // Separate process: same-thread HTTRANSPARENT must not make a broken regression pass.
 internal static class RegressionProbe
 {
-    public static int Run(string mode, string data)
+    public static int Run(string mode, string data, uint allowForegroundProcess = 0)
     {
         var app = new System.Windows.Application();
         var screen = Forms.Screen.PrimaryScreen!;
         var window = new Window { Title = "Desktop Dock · 回归检查", Background = new SolidColorBrush(Color.FromRgb(230, 235, 244)),
             WindowStartupLocation = WindowStartupLocation.Manual, Width = 1000, Height = 700, ShowInTaskbar = true };
+        // Cooperative test processes explicitly permit their parent to regain foreground.
+        window.Activated += (_, _) => { if (allowForegroundProcess != 0) Native.AllowSetForegroundWindow(allowForegroundProcess); };
         void ApplyMode(string current)
         {
             double dpi = Native.GetDpiForWindow(new WindowInteropHelper(window).Handle) / 96d;
@@ -29,7 +31,7 @@ internal static class RegressionProbe
             window.Left = (screen.WorkingArea.Left + 30) / dpi;
             window.Top = (screen.WorkingArea.Top + 40) / dpi;
             window.Width = (screen.WorkingArea.Width - 60) / dpi;
-            window.Height = (screen.WorkingArea.Height - 45) / dpi;
+            window.Height = current == "covered" ? (screen.WorkingArea.Height - 45) / dpi : Math.Max(240, screen.WorkingArea.Height / dpi - 300);
             if (current == "maximized") window.WindowState = WindowState.Maximized;
             if (current == "fullscreen")
             {
@@ -61,15 +63,17 @@ internal static class RegressionProbe
         var modeTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(100) };
         modeTimer.Tick += (_, _) =>
         {
+            if (allowForegroundProcess != 0 && Native.GetForegroundWindow() == new WindowInteropHelper(window).Handle)
+                Native.AllowSetForegroundWindow(allowForegroundProcess);
             string file = Path.Combine(data, "mode.txt");
             if (!File.Exists(file)) return;
             string requested = ReadShared(file).Trim();
-            if (requested == appliedMode || requested is not ("normal" or "maximized" or "fullscreen")) return;
+            if (requested == appliedMode || requested is not ("normal" or "covered" or "maximized" or "fullscreen")) return;
             ApplyMode(requested); appliedMode = requested;
             WriteShared(Path.Combine(data, "ready.json"), JsonSerializer.Serialize(new { Mode = appliedMode, Ready = true, WindowHandle = (long)new WindowInteropHelper(window).Handle }));
         };
         modeTimer.Start();
-        var timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(45) };
+        var timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(60) };
         timer.Tick += (_, _) => { timer.Stop(); modeTimer.Stop(); window.Close(); };
         timer.Start();
         return app.Run(window);
@@ -82,6 +86,7 @@ internal static class RegressionProbe
         if (string.Equals(Path.GetFileNameWithoutExtension(Environment.ProcessPath), "dotnet", StringComparison.OrdinalIgnoreCase))
             start.ArgumentList.Add(typeof(Program).Assembly.Location);
         start.ArgumentList.Add("--probe-window"); start.ArgumentList.Add(mode);
+        start.ArgumentList.Add("--allow-foreground"); start.ArgumentList.Add(Environment.ProcessId.ToString());
         start.ArgumentList.Add("--data-dir"); start.ArgumentList.Add(data);
         return Process.Start(start)!;
     }
@@ -109,6 +114,29 @@ internal static class RegressionProbe
     {
         WriteShared(Path.Combine(data, "mode.txt"), mode);
         await WaitReady(process, data, mode);
+    }
+
+    public static nint Handle(string data)
+    {
+        using var state = JsonDocument.Parse(ReadShared(Path.Combine(data, "ready.json")));
+        return new(state.RootElement.GetProperty("WindowHandle").GetInt64());
+    }
+
+    public static void CreateShortcut(string path, string target, string arguments)
+    {
+        object? shell = null, link = null;
+        try
+        {
+            shell = Activator.CreateInstance(Type.GetTypeFromProgID("WScript.Shell")!);
+            link = ((dynamic)shell!).CreateShortcut(path);
+            ((dynamic)link).TargetPath = target; ((dynamic)link).Arguments = arguments;
+            ((dynamic)link).Save();
+        }
+        finally
+        {
+            if (link is not null) System.Runtime.InteropServices.Marshal.FinalReleaseComObject(link);
+            if (shell is not null) System.Runtime.InteropServices.Marshal.FinalReleaseComObject(shell);
+        }
     }
 
     private static string ReadShared(string path)

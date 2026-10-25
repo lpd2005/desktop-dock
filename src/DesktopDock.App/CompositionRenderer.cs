@@ -155,7 +155,7 @@ internal sealed class CompositionRenderer : IDisposable
             var slot = geometry.Slots[i];
             float actualSize = (float)slot.Size * dpiScale;
             var icon = icons[i];
-            icon.Offset = new((float)slot.X * dpiScale, (float)(geometry.Baseline(height / dpiScale) - slot.Lift) * dpiScale - actualSize, 0);
+            icon.Offset = new((float)slot.X * dpiScale, (float)geometry.Baseline(height / dpiScale) * dpiScale - actualSize, 0);
             icon.Scale = new(actualSize / IconService.Resolution, actualSize / IconService.Resolution, 1);
         }
     }

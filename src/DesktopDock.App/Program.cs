@@ -20,7 +20,12 @@ internal static class Program
         bool preview = args.Contains("--preview") || args.Contains("--smoke-test");
         Directory.CreateDirectory(data);
         int probeIndex = Array.IndexOf(args, "--probe-window");
-        if (probeIndex >= 0 && probeIndex + 1 < args.Length) return RegressionProbe.Run(args[probeIndex + 1], data);
+        if (probeIndex >= 0 && probeIndex + 1 < args.Length)
+        {
+            int grantIndex = Array.IndexOf(args, "--allow-foreground");
+            uint parent = grantIndex >= 0 && grantIndex + 1 < args.Length && uint.TryParse(args[grantIndex + 1], out uint parsed) ? parsed : 0;
+            return RegressionProbe.Run(args[probeIndex + 1], data, parent);
+        }
         using var desktop = new DesktopIcons(data);
         if (args.Contains("--quit"))
         {
@@ -119,10 +124,11 @@ internal sealed class Controller : IDisposable
             var defaults = settings.Items.ToArray();
             settings.Items = Enumerable.Range(0, 19).Select(i => defaults[i % defaults.Length] with { Name = "Sample " + i }).ToList();
         }
-        dock = new(settings, OpenSettings, Save, Recover, Quit, inspectable: preview, toggleSettings: ToggleSettings);
+        dock = new(settings, OpenSettings, Save, Recover, Quit, toggleSettings: ToggleSettings);
         tray = new Forms.NotifyIcon { Text = "Desktop Dock", Icon = System.Drawing.SystemIcons.Application, Visible = true };
         tray.DoubleClick += (_, _) => application.Dispatcher.Invoke(OpenSettings);
         var menu = new Forms.ContextMenuStrip();
+        menu.Items.Add("召回 Dock（" + dock.RecallShortcut + "）", null, (_, _) => application.Dispatcher.Invoke(dock.Summon));
         menu.Items.Add("Dock 设置…", null, (_, _) => application.Dispatcher.Invoke(OpenSettings));
         menu.Items.Add("恢复桌面图标", null, (_, _) => application.Dispatcher.Invoke(Recover));
         menu.Items.Add(new Forms.ToolStripSeparator());
@@ -144,9 +150,10 @@ internal sealed class Controller : IDisposable
     {
         if (settingsWindow is null)
         {
-            settingsWindow = new(settings, Apply, () => { Save(); _ = dock.LoadIcons(); }, Quit);
-            settingsWindow.Closed += (_, _) => settingsWindow = null;
-            settingsWindow.ShowAboveDock(dock.AvailableWindowArea);
+            settingsWindow = new(settings, Apply, () => { Save(); _ = dock.LoadIcons(); }, Quit, dock.RecallShortcut);
+            settingsWindow.Closed += (_, _) => { settingsWindow = null; dock.RefreshOcclusion(); };
+            settingsWindow.Show();
+            dock.RefreshOcclusion();
         }
         else
         {
@@ -156,7 +163,9 @@ internal sealed class Controller : IDisposable
     }
     private void ToggleSettings()
     {
-        if (settingsWindow is { IsVisible: true } && settingsWindow.WindowState != WindowState.Minimized) settingsWindow.Close();
+        if (settingsWindow is { IsVisible: true } && settingsWindow.WindowState != WindowState.Minimized
+            && Native.GetAncestor(Native.GetForegroundWindow(), 3) == new System.Windows.Interop.WindowInteropHelper(settingsWindow).Handle)
+            settingsWindow.WindowState = WindowState.Minimized;
         else OpenSettings();
     }
     private void Recover()
@@ -173,90 +182,157 @@ internal sealed class Controller : IDisposable
         using var process = Process.GetCurrentProcess();
         string probeData = Path.Combine(data, "probe-" + Guid.NewGuid().ToString("N"));
         using var anchor = RegressionProbe.Start("normal", probeData);
+        var testWindows = new List<nint>();
+        var children = new List<nint>();
+        void Require(bool value, string description) { if (!value) throw new InvalidOperationException(description); }
+        async Task WaitFor(Func<bool> condition, string description, int attempts = 60)
+        {
+            for (int i = 0; i < attempts; i++) { if (condition()) return; await Task.Delay(50); }
+            throw new InvalidOperationException(description);
+        }
         try
         {
-        await RegressionProbe.WaitReady(anchor, probeData);
-        dock.CheckVisibility();
-        dock.InvokeSettingsEntry();
-        await Task.Delay(230);
-        bool settingsOpened = settingsWindow is { IsVisible: true };
-        bool settingsAboveDock = settingsWindow is not null && AppWindowPlacement.Frame(new System.Windows.Interop.WindowInteropHelper(settingsWindow).Handle).Bottom <= dock.AvailableWindowArea.Bottom + 2;
-        dock.InvokeSettingsEntry();
-        bool settingsClosedOnSecondClick = settingsWindow is null;
-        dock.InvokeSettingsEntry();
-        await Task.Delay(220);
-        bool settingsReopened = settingsWindow is { IsVisible: true };
-        dock.InvokeSettingsEntry();
-        if (!settingsOpened || !settingsClosedOnSecondClick || !settingsReopened || !settingsAboveDock)
-            throw new InvalidOperationException("Settings toggle or placement regression failed.");
-        string launchData = Path.Combine(probeData, "launched");
-        Directory.CreateDirectory(launchData);
-        string host = Environment.ProcessPath!;
-        string hostArguments = Path.GetFileNameWithoutExtension(host).Equals("dotnet", StringComparison.OrdinalIgnoreCase)
-            ? "\"" + typeof(Program).Assembly.Location + "\" " : "";
-        hostArguments += "--probe-window normal --data-dir \"" + launchData + "\"";
-        nint launchedWindow = 0;
-        bool launchedWindowAboveDock;
-        try
-        {
-            dock.LaunchForCheck(new("Regression launch", host, hostArguments));
-            string ready = Path.Combine(launchData, "ready.json");
-            for (int i = 0; i < 100 && !File.Exists(ready); i++) await Task.Delay(50);
-            using var state = JsonDocument.Parse(File.ReadAllText(ready));
-            launchedWindow = new nint(state.RootElement.GetProperty("WindowHandle").GetInt64());
-            for (int i = 0; i < 50 && dock.LaunchWatcherActive; i++) await Task.Delay(50);
-            await Task.Delay(100);
-            launchedWindowAboveDock = AppWindowPlacement.Frame(launchedWindow).Bottom <= dock.AvailableWindowArea.Bottom + 2;
-            if (!launchedWindowAboveDock || dock.LaunchWatcherActive) throw new InvalidOperationException("Launched window regression: " + JsonSerializer.Serialize(new { Frame = AppWindowPlacement.Frame(launchedWindow), Available = dock.AvailableWindowArea, Watching = dock.LaunchWatcherActive, CandidateIsTarget = dock.LastLaunchCandidate == launchedWindow, FitAccepted = dock.LastLaunchFitAccepted }));
-        }
-        finally { if (launchedWindow != 0) Native.PostMessage(launchedWindow, 0x0010, 0, 0); }
-        await Task.Delay(300);
-        dock.ClearFrameSamples();
-        for (int i = 0; i < 180; i++)
-        {
-            dock.PreviewWave(.5 + Math.Sin(i * .045) * .42);
-            await Task.Delay(8);
-        }
-        var hoveredInputReport = dock.VerifyInputRegion();
-        dock.ResetWave(); await Task.Delay(900);
-        var inputReport = dock.VerifyInputRegion();
-        if (!inputReport.Passed || !hoveredInputReport.Passed) throw new InvalidOperationException("Dock blocks input outside its visible footprint.");
-        var intervals = dock.FrameIntervals.Skip(2).OrderBy(x => x).ToArray();
-        var avoidance = new Dictionary<string, bool>();
-        foreach (string mode in new[] { "maximized", "fullscreen" })
-        {
-            await RegressionProbe.SetMode(anchor, probeData, mode);
+            await RegressionProbe.WaitReady(anchor, probeData);
+            nint anchorWindow = RegressionProbe.Handle(probeData);
+            testWindows.Add(anchorWindow);
+            dock.UseOcclusionWindowsForChecks(() => testWindows.ToArray());
+            await Task.Delay(400);
             dock.CheckVisibility();
-            avoidance[mode] = dock.AvoidanceHidden;
+            Require(dock.IsDockVisible && dock.ExcludedFromAltTab && dock.HotkeyRegistered, "Initial visibility, Alt+Tab exclusion or hotkey registration failed.");
+
+            await RegressionProbe.SetMode(anchor, probeData, "covered");
+            dock.RefreshOcclusion();
+            Require(!dock.IsDockVisible, "Ordinary overlapping window did not hide Dock.");
+            dock.InvokeHotkeyForChecks();
+            await WaitFor(() => dock.IsDockVisible, "Hotkey did not recall covered Dock.");
+            await Task.Delay(3300);
+            dock.CheckVisibility();
+            bool recallTimedOut = !dock.IsDockVisible;
+            Require(recallTimedOut, "Recall did not hide after three idle seconds.");
+            dock.InvokeHotkeyForChecks();
+            await WaitFor(() => dock.IsDockVisible, "Second recall failed.");
+            await Task.Delay(1800);
+            dock.InteractForChecks();
+            await Task.Delay(1400); dock.CheckVisibility();
+            bool interactionResetTimeout = dock.IsDockVisible;
+            await Task.Delay(1800); dock.CheckVisibility();
+            Require(interactionResetTimeout && !dock.IsDockVisible, "Interaction reset or subsequent timeout failed.");
+
+            dock.SetSwitchingForChecks(true);
             await RegressionProbe.SetMode(anchor, probeData, "normal");
-            dock.CheckVisibility();
+            dock.RefreshOcclusion();
+            Require(!dock.IsDockVisible, "Dock flashed while task switching.");
+            dock.SetSwitchingForChecks(false);
+            bool noImmediateFlash = !dock.IsDockVisible;
+            await Task.Delay(400); dock.CheckVisibility();
+            Require(noImmediateFlash && dock.IsDockVisible, "Task-switch stabilization failed.");
+            dock.SetSwitchingForChecks(null);
+
+            dock.InvokeSettingsEntry(); await Task.Delay(200);
+            bool settingsOpened = settingsWindow is { IsVisible: true };
+            Require(settingsOpened, "Settings did not open.");
+            nint settingsHandle = new System.Windows.Interop.WindowInteropHelper(settingsWindow!).Handle;
+            bool settingsExcluded = (Native.GetWindowLongPtr(settingsHandle, -20).ToInt64() & (0x80 | 0x40000)) == 0x80;
+            dock.InvokeSettingsEntry(); await Task.Delay(150);
+            bool settingsMinimized = settingsWindow?.WindowState == WindowState.Minimized;
+            dock.InvokeSettingsEntry(); await Task.Delay(200);
+            bool settingsRestored = settingsWindow is { IsVisible: true, WindowState: WindowState.Normal };
+            Require(settingsExcluded && settingsMinimized && settingsRestored, "Settings taskbar toggle or Alt+Tab exclusion failed.");
+            settingsWindow?.Close();
+
+            string host = Environment.ProcessPath!;
+            string prefix = Path.GetFileNameWithoutExtension(host).Equals("dotnet", StringComparison.OrdinalIgnoreCase)
+                ? "\"" + typeof(Program).Assembly.Location + "\" " : "";
+            var applicationChecks = new Dictionary<string, bool>();
+            foreach (bool shortcut in new[] { false, true })
+            {
+                string launchData = Path.Combine(probeData, shortcut ? "shortcut" : "executable");
+                Directory.CreateDirectory(launchData);
+                string arguments = prefix + "--probe-window normal --allow-foreground " + Environment.ProcessId + " --data-dir \"" + launchData + "\"";
+                DockItem item;
+                if (shortcut)
+                {
+                    string link = Path.Combine(probeData, "Example.lnk");
+                    RegressionProbe.CreateShortcut(link, host, arguments);
+                    item = new("Example shortcut", link);
+                }
+                else item = new("Example executable", host, arguments);
+                dock.LaunchForCheck(item);
+                string ready = Path.Combine(launchData, "ready.json");
+                await WaitFor(() => File.Exists(ready), "Application did not launch.");
+                await Task.Delay(100);
+                nint child = RegressionProbe.Handle(launchData);
+                children.Add(child); testWindows.Add(child);
+                var originalFrame = WindowOcclusion.Frame(child);
+                await WaitFor(() => !dock.LaunchWatcherActive, "App identification watcher did not stop.");
+                Require(dock.LastAppWindow == child, "Wrong app window was associated.");
+                bool notMoved = WindowOcclusion.Frame(child) == originalFrame;
+                dock.LaunchForCheck(item);
+                var action = dock.LastAppAction;
+                await WaitFor(() => Native.IsIconic(child), "Repeated active app click did not minimize: " + action);
+                dock.LaunchForCheck(item);
+                bool restoring = dock.LastAppAction == AppClickAction.Restore;
+                await WaitFor(() => !Native.IsIconic(child), "App did not restore.");
+                OpenSettings(); await Task.Delay(150);
+                settingsWindow!.Activate();
+                nint backgroundController = new System.Windows.Interop.WindowInteropHelper(settingsWindow).Handle;
+                await WaitFor(() => Native.GetAncestor(Native.GetForegroundWindow(), 3) == backgroundController, "Test controller could not acquire foreground.");
+                dock.LaunchForCheck(item);
+                bool activated = dock.LastAppAction == AppClickAction.Activate;
+                await WaitFor(() => Native.GetAncestor(Native.GetForegroundWindow(), 3) == child, "Background app did not activate.");
+                settingsWindow?.Close();
+                applicationChecks[shortcut ? "ShortcutToggleAndNoMove" : "ExecutableToggleAndNoMove"] = restoring && notMoved;
+                applicationChecks[shortcut ? "ShortcutBackgroundActivate" : "ExecutableBackgroundActivate"] = activated;
+                Native.PostMessage(child, 0x0010, 0, 0);
+                await Task.Delay(250);
+                testWindows.Remove(child);
+                Require(restoring && notMoved && activated, "Application regression: " + JsonSerializer.Serialize(new { Shortcut = shortcut, Restored = restoring, NoMove = notMoved, BackgroundActivated = activated, Action = dock.LastAppAction.ToString() }));
+            }
+
+            await RegressionProbe.SetMode(anchor, probeData, "normal");
+            dock.RefreshOcclusion(); await Task.Delay(400); dock.CheckVisibility();
+            dock.ClearFrameSamples();
+            for (int i = 0; i < 180; i++) { dock.PreviewWave(.5 + Math.Sin(i * .045) * .42); await Task.Delay(8); }
+            var hoveredInput = dock.VerifyInputRegion();
+            dock.ResetWave(); await Task.Delay(900);
+            var input = dock.VerifyInputRegion();
+            Require(dock.IsDockVisible && input.Passed && hoveredInput.Passed, "Shaped input region regression failed.");
+            var intervals = dock.FrameIntervals.Skip(2).OrderBy(x => x).ToArray();
+            Require(intervals.Length > 0 && intervals[intervals.Length / 2] < 25, "Animation update cadence regression.");
+
+            var avoidance = new Dictionary<string, bool>();
+            foreach (string mode in new[] { "covered", "maximized", "fullscreen" })
+            {
+                await RegressionProbe.SetMode(anchor, probeData, mode);
+                dock.RefreshOcclusion();
+                avoidance[mode] = !dock.IsDockVisible;
+                await RegressionProbe.SetMode(anchor, probeData, "normal");
+                dock.RefreshOcclusion(); await Task.Delay(400); dock.CheckVisibility();
+            }
+            Require(avoidance.Values.All(x => x) && dock.IsDockVisible, "Coverage, fullscreen or stable reveal regression.");
+            process.Refresh(); var initialCpu = process.TotalProcessorTime; var watch = Stopwatch.StartNew();
+            await Task.Delay(5000); process.Refresh();
+            var report = new
+            {
+                Version = "0.1.0-preview.3", dock.HardwareRendering, dock.HostBackdrop, dock.IconCount,
+                dock.RecallShortcut, dock.HotkeyRegistered, RecallTimedOut = recallTimedOut, InteractionResetTimeout = interactionResetTimeout,
+                DockExcludedFromAltTab = dock.ExcludedFromAltTab, SettingsExcludedFromAltTab = settingsExcluded, NoTaskSwitchFlash = noImmediateFlash,
+                SettingsOpened = settingsOpened, SettingsMinimized = settingsMinimized, SettingsRestored = settingsRestored,
+                ApplicationChecks = applicationChecks, Avoidance = avoidance,
+                InputRegion = input, HoveredInputRegion = hoveredInput,
+                IdleCpuPercent = (process.TotalProcessorTime - initialCpu).TotalMilliseconds / watch.Elapsed.TotalMilliseconds / Environment.ProcessorCount * 100,
+                WorkingSetMiB = process.WorkingSet64 / 1048576d, SampleSeconds = watch.Elapsed.TotalSeconds,
+                MotionFrames = intervals.Length, MotionMedianMs = intervals[intervals.Length / 2],
+                MotionP95Ms = intervals[(int)((intervals.Length - 1) * .95)],
+                Notes = "Controlled test windows; app update cadence is not GPU presentation. Alt+Tab styles and transition policy checked without injecting keys."
+            };
+            File.WriteAllText(Path.Combine(data, "smoke-report.json"), JsonSerializer.Serialize(report, new JsonSerializerOptions { WriteIndented = true }));
         }
-        bool restoredAfterAvoidance = !dock.AvoidanceHidden;
-        if (!restoredAfterAvoidance || avoidance.Values.Any(x => !x)) throw new InvalidOperationException("Foreground avoidance regression failed: " + JsonSerializer.Serialize(avoidance) + "; restored=" + restoredAfterAvoidance);
-        if (intervals.Length == 0 || intervals[intervals.Length / 2] > 25) throw new InvalidOperationException("Active animation updates are unexpectedly slow.");
-        await Task.Delay(1000);
-        process.Refresh();
-        var initialCpu = process.TotalProcessorTime;
-        var watch = Stopwatch.StartNew();
-        await Task.Delay(5000);
-        process.Refresh();
-        var report = new
+        finally
         {
-            Version = "0.1.0-preview.2", dock.HardwareRendering, dock.HostBackdrop, dock.IconCount,
-            IdleCpuPercent = (process.TotalProcessorTime - initialCpu).TotalMilliseconds / watch.Elapsed.TotalMilliseconds / Environment.ProcessorCount * 100,
-            WorkingSetMiB = process.WorkingSet64 / 1048576d,
-            SampleSeconds = watch.Elapsed.TotalSeconds,
-            InputRegion = inputReport, HoveredInputRegion = hoveredInputReport, Avoidance = avoidance, RestoredAfterAvoidance = restoredAfterAvoidance,
-            SettingsOpened = settingsOpened, SettingsClosedOnSecondClick = settingsClosedOnSecondClick, SettingsReopened = settingsReopened,
-            SettingsAboveDock = settingsAboveDock, LaunchedWindowAboveDock = launchedWindowAboveDock, LaunchWatcherStopped = !dock.LaunchWatcherActive,
-            MotionFrames = intervals.Length, dock.HighResolutionClock,
-            MotionMedianMs = intervals.Length > 0 ? intervals[intervals.Length / 2] : 0,
-            MotionP95Ms = intervals.Length > 0 ? intervals[(int)((intervals.Length - 1) * .95)] : 0,
-            Notes = "Motion values measure UI update cadence, not GPU presentation. No desktop icon changes in smoke mode."
-        };
-        File.WriteAllText(Path.Combine(data, "smoke-report.json"), JsonSerializer.Serialize(report, new JsonSerializerOptions { WriteIndented = true }));
+            foreach (nint child in children) if (Native.IsWindow(child)) Native.PostMessage(child, 0x0010, 0, 0);
+            RegressionProbe.Close(anchor);
         }
-        finally { RegressionProbe.Close(anchor); }
         Quit();
     }
     public void Dispose()
