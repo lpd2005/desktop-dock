@@ -6,6 +6,7 @@
 artifacts/
 dist/
 packages/
+.tools/
 TestResults/
 coverage/
 *.nupkg
