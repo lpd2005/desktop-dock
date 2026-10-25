@@ -14,6 +14,9 @@ public sealed class DockSettings
     public bool HideDesktopIcons { get; set; }
     public bool AutoHide { get; set; }
     public bool ReducedMotion { get; set; }
+    public bool TaskbarEnhancement { get; set; }
+    public bool TaskbarAutoHide { get; set; } = true;
+    public bool TaskbarGlass { get; set; } = true;
     public List<DockItem> Items { get; set; } = [];
 
     public void Normalize()

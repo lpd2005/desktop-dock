@@ -19,4 +19,7 @@
     <PackageReference Include="Vortice.Direct3D11" Version="3.8.3" />
     <PackageReference Include="Vortice.Direct2D1" Version="3.8.3" />
   </ItemGroup>
+  <ItemGroup Condition="Exists('../../.tools/TranslucentTB-2026.2/component.json')">
+    <Content Include="../../.tools/TranslucentTB-2026.2/**/*" Link="components/TranslucentTB/%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>

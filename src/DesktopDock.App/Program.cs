@@ -19,6 +19,14 @@ internal static class Program
         if (dataIndex >= 0 && dataIndex + 1 < args.Length) data = Path.GetFullPath(args[dataIndex + 1]);
         bool preview = args.Contains("--preview") || args.Contains("--smoke-test");
         Directory.CreateDirectory(data);
+        if (args.Contains("--taskbar-guard")) return TaskbarRecovery.RunGuard(args, data);
+        if (args.Contains("--taskbar-test")) return TaskbarChecks.Run(data);
+        if (args.Contains("--taskbar-exit-probe")) return TaskbarChecks.RunExitProbe(data);
+        if (args.Contains("--inspect-taskbar"))
+        {
+            File.WriteAllText(Path.Combine(data, "taskbar-inspection.json"), JsonSerializer.Serialize(TaskbarNative.Capture(), new JsonSerializerOptions { WriteIndented = true }));
+            return 0;
+        }
         int probeIndex = Array.IndexOf(args, "--probe-window");
         if (probeIndex >= 0 && probeIndex + 1 < args.Length)
         {
@@ -43,8 +51,15 @@ internal static class Program
         if (args.Contains("--recover"))
         {
             nint live = Native.FindWindow(null, "Desktop Dock");
-            if (live != 0) Native.PostMessage(live, Native.RecoverMessage, 0, 0);
-            else desktop.Recover();
+            if (live != 0) { Native.PostMessage(live, Native.RecoverMessage, 0, 0); Native.PostMessage(live, Native.RestoreTaskbarMessage, 0, 0); }
+            else { desktop.Recover(); TaskbarRecovery.Restore(data); }
+            return 0;
+        }
+        if (args.Contains("--recover-taskbar"))
+        {
+            nint live = Native.FindWindow(null, "Desktop Dock");
+            if (live != 0) Native.PostMessage(live, Native.RestoreTaskbarMessage, 0, 0);
+            else TaskbarRecovery.Restore(data);
             return 0;
         }
         using var mutex = new Mutex(true, "Local\\DesktopDock.SingleInstance", out bool created);
@@ -64,6 +79,7 @@ internal static class Program
                 e.Handled = true;
             };
             desktop.Recover();
+            TaskbarRecovery.Restore(data);
             controller = new(application, data, desktop, preview, args.Contains("--stress"));
             application.Startup += async (_, _) =>
             {
@@ -98,6 +114,8 @@ internal sealed class Controller : IDisposable
     private readonly bool preview;
     private readonly Forms.NotifyIcon tray;
     private readonly DockWindow dock;
+    private readonly TaskbarEnhancement taskbar;
+    private (bool Enabled, bool AutoHide, bool Glass, bool Light)? taskbarConfiguration;
     private SettingsWindow? settingsWindow;
     private bool disposed;
 
@@ -124,13 +142,18 @@ internal sealed class Controller : IDisposable
             var defaults = settings.Items.ToArray();
             settings.Items = Enumerable.Range(0, 19).Select(i => defaults[i % defaults.Length] with { Name = "Sample " + i }).ToList();
         }
+        if (preview) settings.TaskbarEnhancement = false;
+        taskbar = new(data);
         dock = new(settings, OpenSettings, Save, Recover, Quit, toggleSettings: ToggleSettings);
+        dock.RestoreTaskbarRequested = RestoreTaskbar;
         tray = new Forms.NotifyIcon { Text = "Desktop Dock", Icon = System.Drawing.SystemIcons.Application, Visible = true };
         tray.DoubleClick += (_, _) => application.Dispatcher.Invoke(OpenSettings);
         var menu = new Forms.ContextMenuStrip();
         menu.Items.Add("召回 Dock（" + dock.RecallShortcut + "）", null, (_, _) => application.Dispatcher.Invoke(dock.Summon));
         menu.Items.Add("Dock 设置…", null, (_, _) => application.Dispatcher.Invoke(OpenSettings));
         menu.Items.Add("恢复桌面图标", null, (_, _) => application.Dispatcher.Invoke(Recover));
+        menu.Items.Add("唤出顶部任务栏", null, (_, _) => application.Dispatcher.Invoke(taskbar.Reveal));
+        menu.Items.Add("恢复原生任务栏", null, (_, _) => application.Dispatcher.Invoke(RestoreTaskbar));
         menu.Items.Add(new Forms.ToolStripSeparator());
         menu.Items.Add("退出并恢复桌面", null, (_, _) => application.Dispatcher.Invoke(Quit));
         tray.ContextMenuStrip = menu;
@@ -140,17 +163,30 @@ internal sealed class Controller : IDisposable
     {
         await dock.LoadIcons();
         desktop.Apply(settings.HideDesktopIcons);
+        ApplyTaskbar();
     }
     private void Save()
     {
         if (!preview) SettingsStore.Save(Path.Combine(data, "settings.json"), settings);
     }
-    private void Apply() { Save(); desktop.Apply(settings.HideDesktopIcons); dock.ApplySettings(); }
+    private void Apply() { Save(); desktop.Apply(settings.HideDesktopIcons); dock.ApplySettings(); ApplyTaskbar(); }
+    private void ApplyTaskbar()
+    {
+        var current = (settings.TaskbarEnhancement, settings.TaskbarAutoHide, settings.TaskbarGlass, settings.LightTheme);
+        if (taskbarConfiguration == current) return;
+        taskbarConfiguration = current;
+        taskbar.Apply(settings);
+    }
+    private void RestoreTaskbar()
+    {
+        settings.TaskbarEnhancement = false; taskbarConfiguration = null;
+        taskbar.Stop(); Save(); settingsWindow?.Close();
+    }
     public void OpenSettings()
     {
         if (settingsWindow is null)
         {
-            settingsWindow = new(settings, Apply, () => { Save(); _ = dock.LoadIcons(); }, Quit, dock.RecallShortcut);
+            settingsWindow = new(settings, Apply, () => { Save(); _ = dock.LoadIcons(); }, Quit, dock.RecallShortcut, taskbar);
             settingsWindow.Closed += (_, _) => { settingsWindow = null; dock.RefreshOcclusion(); };
             settingsWindow.Show();
             dock.RefreshOcclusion();
@@ -175,7 +211,7 @@ internal sealed class Controller : IDisposable
         Save();
         settingsWindow?.Close();
     }
-    private void Quit() { desktop.Restore(); application.Shutdown(); }
+    private void Quit() { taskbar.Stop(); desktop.Restore(); application.Shutdown(); }
 
     public async Task RunSmokeTest()
     {
@@ -314,7 +350,7 @@ internal sealed class Controller : IDisposable
             await Task.Delay(5000); process.Refresh();
             var report = new
             {
-                Version = "0.1.0-preview.3", dock.HardwareRendering, dock.HostBackdrop, dock.IconCount,
+                Version = "0.1.0-preview.4", dock.HardwareRendering, dock.HostBackdrop, dock.IconCount,
                 dock.RecallShortcut, dock.HotkeyRegistered, RecallTimedOut = recallTimedOut, InteractionResetTimeout = interactionResetTimeout,
                 DockExcludedFromAltTab = dock.ExcludedFromAltTab, SettingsExcludedFromAltTab = settingsExcluded, NoTaskSwitchFlash = noImmediateFlash,
                 SettingsOpened = settingsOpened, SettingsMinimized = settingsMinimized, SettingsRestored = settingsRestored,
@@ -339,6 +375,6 @@ internal sealed class Controller : IDisposable
     {
         if (disposed) return;
         disposed = true; tray.Visible = false; tray.ContextMenuStrip?.Dispose(); tray.Dispose();
-        dock.Dispose(); desktop.Restore();
+        taskbar.Dispose(); dock.Dispose(); desktop.Restore();
     }
 }

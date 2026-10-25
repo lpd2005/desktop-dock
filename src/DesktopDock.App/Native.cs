@@ -5,6 +5,7 @@ namespace DesktopDock.App;
 internal static class Native
 {
     internal const int RecoverMessage = 0x8007;
+    internal const int RestoreTaskbarMessage = 0x8008;
     [StructLayout(LayoutKind.Sequential)] internal struct Point { public int X, Y; }
     [StructLayout(LayoutKind.Sequential)] internal struct Rect { public int Left, Top, Right, Bottom; }
     [StructLayout(LayoutKind.Sequential)] internal struct QueueOptions { public int Size, ThreadType, ApartmentType; }
@@ -66,4 +67,15 @@ internal static class Native
     [DllImport("user32.dll")] internal static extern nint SetWinEventHook(uint eventMin, uint eventMax, nint module, WinEvent callback, uint process, uint thread, uint flags);
     [DllImport("user32.dll")] internal static extern bool UnhookWinEvent(nint hook);
     internal delegate void WinEvent(nint hook, uint eventType, nint hwnd, int objectId, int childId, uint thread, uint time);
+    [StructLayout(LayoutKind.Sequential)] internal struct AppBarData
+    { public uint Size; public nint Window; public uint Callback, Edge; public Rect Bounds; public nint Param; }
+    [StructLayout(LayoutKind.Sequential)] internal struct MonitorInfo
+    { public int Size; public Rect Monitor, Work; public uint Flags; }
+    [StructLayout(LayoutKind.Sequential)] internal struct GuiThreadInfo
+    { public int Size, Flags; public nint Active, Focus, Capture, MenuOwner, MoveSize, Caret; public Rect CaretBounds; }
+    [DllImport("user32.dll")] internal static extern nint MonitorFromWindow(nint hwnd, uint flags);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] internal static extern bool GetMonitorInfo(nint monitor, ref MonitorInfo info);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] internal static extern bool SystemParametersInfo(uint action, uint parameter, ref Rect rect, uint flags);
+    [DllImport("user32.dll")] internal static extern bool GetGUIThreadInfo(uint thread, ref GuiThreadInfo info);
+    [DllImport("shell32.dll")] internal static extern nuint SHAppBarMessage(uint message, ref AppBarData data);
 }

@@ -53,6 +53,7 @@ internal sealed class DockWindow : IDisposable
     public bool HostBackdrop => renderer.HostBackdrop;
     public int IconCount => renderer.IconCount;
     public bool AvoidanceHidden => blocked;
+    public Action? RestoreTaskbarRequested { get; set; }
     public bool HighResolutionClock => animationClock.HighResolution;
     public IReadOnlyList<double> FrameIntervals => frameIntervals;
     public bool LaunchWatcherActive => launcher.IsWatching;
@@ -257,8 +258,10 @@ internal sealed class DockWindow : IDisposable
             case 0x0215: pressedIndex = -1; break;
             case 0x0205: NoteInteraction(); ShowMenu(HitIndex(x, y)); break;
             case 0x007E:
+            case 0x001A:
             case 0x02E0: source.Dispatcher.BeginInvoke(Reposition); break;
             case Native.RecoverMessage: recover(); break;
+            case Native.RestoreTaskbarMessage: RestoreTaskbarRequested?.Invoke(); break;
             case 0x0010: quit(); handled = true; break;
         }
         return 0;
