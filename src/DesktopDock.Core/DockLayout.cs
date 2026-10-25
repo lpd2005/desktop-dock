@@ -1,6 +1,6 @@
 namespace DesktopDock.Core;
 
-public readonly record struct DockSlot(double X, double Size);
+public readonly record struct DockSlot(double X, double Size, double Lift = 0);
 public sealed record DockGeometry(DockSlot[] Slots, double Width, double IconSize, double SeparatorX = -1)
 {
     public const double Padding = 14;
@@ -13,7 +13,7 @@ public sealed record DockGeometry(DockSlot[] Slots, double Width, double IconSiz
     {
         double bottom = Baseline(height);
         for (int i = 0; i < Slots.Length; i++)
-            if (x >= Slots[i].X && x <= Slots[i].X + Slots[i].Size && y >= bottom - Slots[i].Size && y <= bottom) return i;
+            if (x >= Slots[i].X && x <= Slots[i].X + Slots[i].Size && y >= bottom - Slots[i].Lift - Slots[i].Size && y <= bottom - Slots[i].Lift) return i;
         return -1;
     }
 }

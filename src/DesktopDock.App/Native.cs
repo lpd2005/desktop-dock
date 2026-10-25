@@ -22,6 +22,7 @@ internal static class Native
     [DllImport("user32.dll")] internal static extern bool EnumWindows(EnumCallback callback, nint data);
     [DllImport("user32.dll")] internal static extern bool IsWindowVisible(nint hwnd);
     [DllImport("user32.dll")] internal static extern bool ShowWindow(nint hwnd, int command);
+    [DllImport("user32.dll")] internal static extern bool ShowWindowAsync(nint hwnd, int command);
     [DllImport("user32.dll")] internal static extern bool SetWindowPos(nint hwnd, nint insertAfter, int x, int y, int width, int height, uint flags);
     [DllImport("user32.dll")] internal static extern bool TrackMouseEvent(ref MouseTrack track);
     [DllImport("user32.dll")] internal static extern bool GetCursorPos(out Point point);
@@ -31,6 +32,7 @@ internal static class Native
     [DllImport("user32.dll")] internal static extern nint GetForegroundWindow();
     [DllImport("user32.dll")] internal static extern bool SetForegroundWindow(nint hwnd);
     [DllImport("user32.dll")] internal static extern bool IsIconic(nint hwnd);
+    [DllImport("user32.dll")] internal static extern bool IsWindow(nint hwnd);
     [DllImport("user32.dll")] internal static extern bool IsZoomed(nint hwnd);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] internal static extern int GetClassName(nint hwnd, System.Text.StringBuilder text, int max);
     [DllImport("user32.dll")] internal static extern nint WindowFromPoint(Point point);
@@ -49,6 +51,7 @@ internal static class Native
     [DllImport("user32.dll")] internal static extern bool ReleaseCapture();
     [DllImport("dwmapi.dll")] internal static extern int DwmSetWindowAttribute(nint hwnd, int attribute, ref int value, int size);
     [DllImport("dwmapi.dll")] internal static extern int DwmGetWindowAttribute(nint hwnd, int attribute, out Rect value, int size);
+    [DllImport("dwmapi.dll", EntryPoint = "DwmGetWindowAttribute")] internal static extern int DwmGetIntAttribute(nint hwnd, int attribute, out int value, int size);
     [DllImport("CoreMessaging.dll")] internal static extern int CreateDispatcherQueueController(QueueOptions options, out nint queue);
     [DllImport("shell32.dll", CharSet = CharSet.Unicode)] internal static extern nint SHGetFileInfo(string path, uint attributes, out ShellFileInfo info, uint size, uint flags);
     [DllImport("shell32.dll")] internal static extern int SHGetImageList(int size, ref Guid iid, out nint imageList);

@@ -21,7 +21,7 @@ public static class DockFootprint
         var result = new List<RoundedBounds> { new(geometry.BodyLeft(width) - 5, top - 5, geometry.Width + 10, geometry.IconSize + 32, 24) };
         foreach (var slot in geometry.Slots)
         {
-            double y = geometry.Baseline(height) - slot.Size;
+            double y = geometry.Baseline(height) - slot.Lift - slot.Size;
             if (y < top) result.Add(new(slot.X - 1, y - 1, slot.Size + 2, slot.Size + 3, 8));
         }
         return result.ToArray();

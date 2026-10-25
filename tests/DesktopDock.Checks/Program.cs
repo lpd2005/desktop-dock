@@ -65,4 +65,14 @@ Check(WindowAvoidance.ShouldHide(new(0, 0, 1920, 1032), monitor, true, true), "M
 Check(!WindowAvoidance.ShouldHide(new(0, 0, 1920, 1032), monitor, true, false), "Maximized avoidance can be disabled");
 Check(!WindowAvoidance.ShouldHide(new(1920, 0, 3840, 1080), monitor, true, true), "Other monitor does not hide Dock");
 Check(!WindowAvoidance.ShouldHide(new(100, 100, 1200, 900), monitor, false, true), "Normal window keeps Dock visible");
+var safe = new WindowBounds(0, 0, 1920, 920);
+Check(WindowFitting.Fit(new(100, 400, 1100, 1080), safe) == new WindowBounds(100, 240, 1100, 920), "Move overlapping window above Dock without resizing");
+Check(WindowFitting.Fit(new(0, 0, 2000, 1200), safe) == safe, "Shrink oversize startup window to available area");
+Check(WindowFitting.Fit(new(200, 100, 800, 700), safe) == new WindowBounds(200, 100, 800, 700), "Leave already fitting window alone");
+Check(WindowFitting.Fit(new(-200, -100, 800, 700), safe) == new WindowBounds(0, 0, 1000, 800), "Keep fitted window within monitor");
+Check(LaunchFeedback.Lift(0) == 0 && LaunchFeedback.Lift(LaunchFeedback.Duration) == 0, "Launch feedback starts and ends at rest");
+for (int i = 0; i < 100; i++) Check(LaunchFeedback.Lift(i * LaunchFeedback.Duration / 100) is >= 0 and < 12, "Bounded launch feedback");
+var lifted = DockLayout.Calculate(5, 48, 1.65, null, 1000);
+lifted.Slots[2] = lifted.Slots[2] with { Lift = 8 };
+Check(lifted.HitIcon(lifted.Slots[2].X + 24, lifted.Baseline(190) - 8 - 24, 190) == 2, "Bouncing visual and hit target share geometry");
 Console.WriteLine($"PASS: {checks} geometry and persistence checks.");

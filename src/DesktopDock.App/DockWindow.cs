@@ -17,6 +17,8 @@ internal sealed class DockWindow : IDisposable
     private readonly WindowRegion region;
     private readonly DockSettings settings;
     private readonly Action openSettings, changed, recover, quit;
+    private readonly Action toggleSettings;
+    private readonly LaunchCoordinator launcher;
     private readonly DispatcherTimer visibilityTimer;
     private readonly DispatcherTimer labelTimer;
     private readonly AnimationClock animationClock;
@@ -37,6 +39,8 @@ internal sealed class DockWindow : IDisposable
     private bool syntheticHover;
     private double pointerTarget, lastFrame, lastPresence, edgeSince = -1;
     private int pressedIndex = -1, hoveredIndex = -1, loadGeneration;
+    private int feedbackIndex = -1;
+    private double feedbackStarted;
     private Native.Point pressedPoint;
     private ContextMenu? context;
     public nint Handle => source.Handle;
@@ -46,11 +50,16 @@ internal sealed class DockWindow : IDisposable
     public bool AvoidanceHidden => blocked;
     public bool HighResolutionClock => animationClock.HighResolution;
     public IReadOnlyList<double> FrameIntervals => frameIntervals;
+    public bool LaunchWatcherActive => launcher.IsWatching;
+    internal nint LastLaunchCandidate => launcher.LastCandidate;
+    internal bool LastLaunchFitAccepted => launcher.LastFitAccepted;
 
-    public DockWindow(DockSettings settings, Action openSettings, Action changed, Action recover, Action quit, bool inspectable = false)
+    public DockWindow(DockSettings settings, Action openSettings, Action changed, Action recover, Action quit, bool inspectable = false, Action? toggleSettings = null)
     {
         this.settings = settings; this.openSettings = openSettings; this.changed = changed;
         this.recover = recover; this.quit = quit;
+        this.toggleSettings = toggleSettings ?? openSettings;
+        launcher = new(settings, () => AvailableWindowArea);
         source = new HwndSource(new HwndSourceParameters("Desktop Dock")
         {
             WindowStyle = unchecked((int)0x80000000),
@@ -127,8 +136,16 @@ internal sealed class DockWindow : IDisposable
     private void RenderLayout()
     {
         if (entries.Count == 0) return;
+        if (settings.ReducedMotion || !settings.LaunchAnimation) feedbackIndex = -1;
         geometry = DockLayout.Calculate(entries.Count, settings.IconSize, settings.Magnification,
             hover.Value > 0 ? pointer.Value : null, width / scale, hover.Value, separatorBefore);
+        if (feedbackIndex >= 0 && feedbackIndex < geometry.Slots.Length)
+        {
+            double elapsed = clock.Elapsed.TotalSeconds - feedbackStarted;
+            if (elapsed < LaunchFeedback.Duration)
+                geometry.Slots[feedbackIndex] = geometry.Slots[feedbackIndex] with { Lift = LaunchFeedback.Lift(elapsed) };
+            else feedbackIndex = -1;
+        }
         renderer.Layout(geometry, width, height, scale);
         footprint = DockFootprint.Create(geometry, width / scale, height / scale);
         if (!autoHidden && !blocked) region.Update(footprint, scale);
@@ -160,6 +177,7 @@ internal sealed class DockWindow : IDisposable
         active |= hover.Step(present ? 1 : 0, dt, present ? 36 : 29);
         if (settings.ReducedMotion) { pointer.Reset(pointerTarget); hover.Reset(present ? 1 : 0); active = false; }
         RenderLayout();
+        active |= feedbackIndex >= 0;
         if (frameIntervals.Count < 5000) frameIntervals.Add(dt * 1000);
         if (!active) StopRendering();
     }
@@ -245,11 +263,15 @@ internal sealed class DockWindow : IDisposable
 
     private void Launch(DockItem item)
     {
-        if (item.Target == "dock:settings") { openSettings(); return; }
+        if (item.Target == "dock:settings") { toggleSettings(); return; }
         try
         {
-            string path = Environment.ExpandEnvironmentVariables(item.Target);
-            Process.Start(new ProcessStartInfo(path, item.Arguments) { UseShellExecute = true });
+            if (settings.LaunchAnimation && !settings.ReducedMotion)
+            {
+                feedbackIndex = entries.IndexOf(item); feedbackStarted = clock.Elapsed.TotalSeconds;
+                StartRendering();
+            }
+            launcher.Launch(item);
         }
         catch (Exception e) when (e is System.ComponentModel.Win32Exception or InvalidOperationException)
         { System.Windows.MessageBox.Show("无法打开这个入口，请检查目标是否仍然存在。", "Desktop Dock"); }
@@ -369,6 +391,21 @@ internal sealed class DockWindow : IDisposable
     public void ResetWave() { syntheticHover = false; StartRendering(); }
     public void ClearFrameSamples() => frameIntervals.Clear();
 
+    public WindowBounds AvailableWindowArea
+    {
+        get
+        {
+            var screen = Forms.Screen.PrimaryScreen!.WorkingArea;
+            var rest = DockLayout.Calculate(entries.Count, settings.IconSize, settings.Magnification, null, width / scale, separatorBefore: separatorBefore);
+            double reserve = settings.BottomGap + 8 + Math.Max(DockGeometry.Foot + rest.IconSize + 22,
+                DockGeometry.Foot + DockGeometry.IconInset + rest.IconSize * settings.Magnification);
+            return new(screen.Left, screen.Top, screen.Right, Math.Max(screen.Top + 200, screen.Bottom - (int)Math.Ceiling(reserve * scale)));
+        }
+    }
+
+    internal void InvokeSettingsEntry() => Launch(new("Dock 设置", "dock:settings"));
+    internal void LaunchForCheck(DockItem item) => Launch(item);
+
     public InputRegionReport VerifyInputRegion()
     {
         nint nativeRegion = Native.CreateRectRgn(0, 0, 0, 0);
@@ -396,7 +433,7 @@ internal sealed class DockWindow : IDisposable
         disposed = true; StopRendering(); visibilityTimer.Stop(); labelTimer.Stop(); label.IsOpen = false;
         foreach (nint hook in hooks) if (hook != 0) Native.UnhookWinEvent(hook);
         context?.SetCurrentValue(ContextMenu.IsOpenProperty, false);
-        animationClock.Dispose(); renderer.Dispose(); source.Dispose();
+        launcher.Dispose(); animationClock.Dispose(); renderer.Dispose(); source.Dispose();
     }
 }
 

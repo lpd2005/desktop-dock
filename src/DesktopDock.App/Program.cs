@@ -119,7 +119,7 @@ internal sealed class Controller : IDisposable
             var defaults = settings.Items.ToArray();
             settings.Items = Enumerable.Range(0, 19).Select(i => defaults[i % defaults.Length] with { Name = "Sample " + i }).ToList();
         }
-        dock = new(settings, OpenSettings, Save, Recover, Quit, inspectable: preview);
+        dock = new(settings, OpenSettings, Save, Recover, Quit, inspectable: preview, toggleSettings: ToggleSettings);
         tray = new Forms.NotifyIcon { Text = "Desktop Dock", Icon = System.Drawing.SystemIcons.Application, Visible = true };
         tray.DoubleClick += (_, _) => application.Dispatcher.Invoke(OpenSettings);
         var menu = new Forms.ContextMenuStrip();
@@ -146,9 +146,18 @@ internal sealed class Controller : IDisposable
         {
             settingsWindow = new(settings, Apply, () => { Save(); _ = dock.LoadIcons(); }, Quit);
             settingsWindow.Closed += (_, _) => settingsWindow = null;
-            settingsWindow.Show();
+            settingsWindow.ShowAboveDock(dock.AvailableWindowArea);
         }
-        else settingsWindow.Activate();
+        else
+        {
+            if (settingsWindow.WindowState == WindowState.Minimized) settingsWindow.WindowState = WindowState.Normal;
+            settingsWindow.Activate();
+        }
+    }
+    private void ToggleSettings()
+    {
+        if (settingsWindow is { IsVisible: true } && settingsWindow.WindowState != WindowState.Minimized) settingsWindow.Close();
+        else OpenSettings();
     }
     private void Recover()
     {
@@ -168,6 +177,40 @@ internal sealed class Controller : IDisposable
         {
         await RegressionProbe.WaitReady(anchor, probeData);
         dock.CheckVisibility();
+        dock.InvokeSettingsEntry();
+        await Task.Delay(230);
+        bool settingsOpened = settingsWindow is { IsVisible: true };
+        bool settingsAboveDock = settingsWindow is not null && AppWindowPlacement.Frame(new System.Windows.Interop.WindowInteropHelper(settingsWindow).Handle).Bottom <= dock.AvailableWindowArea.Bottom + 2;
+        dock.InvokeSettingsEntry();
+        bool settingsClosedOnSecondClick = settingsWindow is null;
+        dock.InvokeSettingsEntry();
+        await Task.Delay(220);
+        bool settingsReopened = settingsWindow is { IsVisible: true };
+        dock.InvokeSettingsEntry();
+        if (!settingsOpened || !settingsClosedOnSecondClick || !settingsReopened || !settingsAboveDock)
+            throw new InvalidOperationException("Settings toggle or placement regression failed.");
+        string launchData = Path.Combine(probeData, "launched");
+        Directory.CreateDirectory(launchData);
+        string host = Environment.ProcessPath!;
+        string hostArguments = Path.GetFileNameWithoutExtension(host).Equals("dotnet", StringComparison.OrdinalIgnoreCase)
+            ? "\"" + typeof(Program).Assembly.Location + "\" " : "";
+        hostArguments += "--probe-window normal --data-dir \"" + launchData + "\"";
+        nint launchedWindow = 0;
+        bool launchedWindowAboveDock;
+        try
+        {
+            dock.LaunchForCheck(new("Regression launch", host, hostArguments));
+            string ready = Path.Combine(launchData, "ready.json");
+            for (int i = 0; i < 100 && !File.Exists(ready); i++) await Task.Delay(50);
+            using var state = JsonDocument.Parse(File.ReadAllText(ready));
+            launchedWindow = new nint(state.RootElement.GetProperty("WindowHandle").GetInt64());
+            for (int i = 0; i < 50 && dock.LaunchWatcherActive; i++) await Task.Delay(50);
+            await Task.Delay(100);
+            launchedWindowAboveDock = AppWindowPlacement.Frame(launchedWindow).Bottom <= dock.AvailableWindowArea.Bottom + 2;
+            if (!launchedWindowAboveDock || dock.LaunchWatcherActive) throw new InvalidOperationException("Launched window regression: " + JsonSerializer.Serialize(new { Frame = AppWindowPlacement.Frame(launchedWindow), Available = dock.AvailableWindowArea, Watching = dock.LaunchWatcherActive, CandidateIsTarget = dock.LastLaunchCandidate == launchedWindow, FitAccepted = dock.LastLaunchFitAccepted }));
+        }
+        finally { if (launchedWindow != 0) Native.PostMessage(launchedWindow, 0x0010, 0, 0); }
+        await Task.Delay(300);
         dock.ClearFrameSamples();
         for (int i = 0; i < 180; i++)
         {
@@ -199,11 +242,13 @@ internal sealed class Controller : IDisposable
         process.Refresh();
         var report = new
         {
-            Version = "0.1.0-preview.1", dock.HardwareRendering, dock.HostBackdrop, dock.IconCount,
+            Version = "0.1.0-preview.2", dock.HardwareRendering, dock.HostBackdrop, dock.IconCount,
             IdleCpuPercent = (process.TotalProcessorTime - initialCpu).TotalMilliseconds / watch.Elapsed.TotalMilliseconds / Environment.ProcessorCount * 100,
             WorkingSetMiB = process.WorkingSet64 / 1048576d,
             SampleSeconds = watch.Elapsed.TotalSeconds,
             InputRegion = inputReport, HoveredInputRegion = hoveredInputReport, Avoidance = avoidance, RestoredAfterAvoidance = restoredAfterAvoidance,
+            SettingsOpened = settingsOpened, SettingsClosedOnSecondClick = settingsClosedOnSecondClick, SettingsReopened = settingsReopened,
+            SettingsAboveDock = settingsAboveDock, LaunchedWindowAboveDock = launchedWindowAboveDock, LaunchWatcherStopped = !dock.LaunchWatcherActive,
             MotionFrames = intervals.Length, dock.HighResolutionClock,
             MotionMedianMs = intervals.Length > 0 ? intervals[intervals.Length / 2] : 0,
             MotionP95Ms = intervals.Length > 0 ? intervals[(int)((intervals.Length - 1) * .95)] : 0,

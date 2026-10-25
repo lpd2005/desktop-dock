@@ -56,7 +56,7 @@ internal static class RegressionProbe
         window.Loaded += (_, _) =>
         {
             window.Activate();
-            WriteShared(Path.Combine(data, "ready.json"), JsonSerializer.Serialize(new { Mode = appliedMode, Ready = true }));
+            WriteShared(Path.Combine(data, "ready.json"), JsonSerializer.Serialize(new { Mode = appliedMode, Ready = true, WindowHandle = (long)new WindowInteropHelper(window).Handle }));
         };
         var modeTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(100) };
         modeTimer.Tick += (_, _) =>
@@ -66,10 +66,10 @@ internal static class RegressionProbe
             string requested = ReadShared(file).Trim();
             if (requested == appliedMode || requested is not ("normal" or "maximized" or "fullscreen")) return;
             ApplyMode(requested); appliedMode = requested;
-            WriteShared(Path.Combine(data, "ready.json"), JsonSerializer.Serialize(new { Mode = appliedMode, Ready = true }));
+            WriteShared(Path.Combine(data, "ready.json"), JsonSerializer.Serialize(new { Mode = appliedMode, Ready = true, WindowHandle = (long)new WindowInteropHelper(window).Handle }));
         };
         modeTimer.Start();
-        var timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(30) };
+        var timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(45) };
         timer.Tick += (_, _) => { timer.Stop(); modeTimer.Stop(); window.Close(); };
         timer.Start();
         return app.Run(window);
