@@ -48,6 +48,8 @@ internal sealed class DockWindow : IDisposable
     private bool syntheticHover;
     private double pointerTarget, lastFrame;
     private int pressedIndex = -1, hoveredIndex = -1, loadGeneration;
+    private int interactionVersion;
+    private bool startingDrag;
     private int pendingDropGeneration;
     private int hideTransitions;
     private bool? pointerOverForChecks;
@@ -57,6 +59,7 @@ internal sealed class DockWindow : IDisposable
     private Native.Point pressedPoint;
     private bool dragging, returning, sortingSettles, externalDrop, suppressHover, systemDragging;
     private bool checkingInteraction;
+    private Action? dragStartInterruptionForChecks;
     private int dragFrom = -1, dragTo = -1, ghostIndex = -1, insertion = -1;
     private double gripX = .5, gripY = .5, dragX, dragY, ghostX, ghostY, returnX, returnY;
     private int ghostMargin;
@@ -268,12 +271,13 @@ internal sealed class DockWindow : IDisposable
             dragTo = DockReorder.Target(RestGeometry, settings.Items.Count, dragFrom, dragX);
             if (!down)
             {
+                interactionVersion++;
                 pressedIndex = -1;
                 EndIconDrag(CanDropSort(dragX, dragY), DockReorder.RemoveOnRelease(RestGeometry, width / scale, height / scale, dragX, dragY));
                 Native.ReleaseCapture();
             }
         }
-        else if (!down && !IsPointerOverDock()) { pressedIndex = -1; Native.ReleaseCapture(); }
+        else if (!down && !IsPointerOverDock()) { interactionVersion++; pressedIndex = -1; Native.ReleaseCapture(); }
     }
 
     private nint Message(nint hwnd, int msg, nint wparam, nint lparam, ref bool handled)
@@ -329,6 +333,7 @@ internal sealed class DockWindow : IDisposable
                 break;
             case 0x0201:
                 NoteInteraction();
+                interactionVersion++;
                 if (returning) FinishGhost();
                 label.IsOpen = false; labelTimer.Stop();
                 pressedIndex = HitIndex(x, y); pressedPoint = new() { X = x, Y = y };
@@ -343,6 +348,7 @@ internal sealed class DockWindow : IDisposable
                 break;
             case 0x0202:
                 NoteInteraction();
+                interactionVersion++;
                 int pressed = pressedIndex;
                 bool wasDragging = dragging;
                 pressedIndex = -1;
@@ -356,7 +362,7 @@ internal sealed class DockWindow : IDisposable
                 break;
             case 0x0215:
             case 0x001F:
-                if (pressedIndex >= 0 || dragging) { pressedIndex = -1; if (dragging) EndIconDrag(false); }
+                if (pressedIndex >= 0 || dragging || startingDrag) CancelInteraction();
                 break;
             case 0x0205: NoteInteraction(); ShowMenu(HitIndex(x, y)); break;
             case 0x007E:
@@ -513,20 +519,33 @@ internal sealed class DockWindow : IDisposable
     }
     private void BeginIconDrag()
     {
-        if (pressedIndex < 0 || pressedIndex >= settings.Items.Count || pendingDropGeneration != 0) return;
-        if (!checkingInteraction)
+        int index = pressedIndex, version = interactionVersion, generation = loadGeneration;
+        if (startingDrag || dragging || disposed || pendingDropGeneration != 0 || index < 0
+            || index >= settings.Items.Count || index >= entries.Count - 1) return;
+        var item = entries[index];
+        if (settings.Items[index] != item || !iconCache.TryGetValue(item.Target, out var pixels)) return;
+        bool Current() => !disposed && interactionVersion == version && loadGeneration == generation
+            && pressedIndex == index && pendingDropGeneration == 0 && index < entries.Count - 1
+            && index < settings.Items.Count && entries[index] == item && settings.Items[index] == item;
+
+        startingDrag = true;
+        BitmapOverlay? prepared = null;
+        try
         {
-            // Foreground capture is required to keep receiving movement and
-            // release outside the Dock. Normal clicks still do not activate it.
-            Native.SetForegroundWindow(Handle); Native.SetCapture(Handle);
+            // The gesture's frame loop already follows the pointer outside the
+            // Dock. Activating or re-capturing here can synchronously cancel the
+            // press; never use mutable pressedIndex after such a notification.
+            var image = BitmapOverlay.Icon(pixels, IconService.Resolution, (int)Math.Round(RestGeometry.IconSize * scale));
+            prepared = new(image.Pixels, image.Side, image.Side);
+            labelTimer.Stop(); label.IsOpen = false;
+            dragStartInterruptionForChecks?.Invoke();
+            if (!Current()) return;
+            ghost = prepared; prepared = null; ghostMargin = image.Margin;
+            dragging = true; dragFrom = dragTo = ghostIndex = index;
+            hover.Reset(0); suppressHover = true;
+            StartRendering();
         }
-        dragging = true; dragFrom = dragTo = ghostIndex = pressedIndex;
-        labelTimer.Stop(); label.IsOpen = false; hover.Reset(0); suppressHover = true;
-        var item = entries[dragFrom];
-        var image = BitmapOverlay.Icon(iconCache[item.Target], IconService.Resolution, (int)Math.Round(RestGeometry.IconSize * scale));
-        ghostMargin = image.Margin;
-        ghost = new(image.Pixels, image.Side, image.Side);
-        StartRendering();
+        finally { prepared?.Dispose(); startingDrag = false; }
     }
     private bool UpdateGhost(double now)
     {
@@ -540,6 +559,7 @@ internal sealed class DockWindow : IDisposable
         }
         else if (returning)
         {
+            if (ghostIndex < 0 || ghostIndex >= rest.Slots.Length) { FinishGhost(); return false; }
             double t = returnMotion.Sample(now);
             x = returnX + (left + rest.Slots[ghostIndex].X * scale - ghostMargin - returnX) * t;
             y = returnY + (top + (rest.Baseline(height / scale) - rest.Slots[ghostIndex].Size) * scale - ghostMargin + 3 - returnY) * t;
@@ -555,13 +575,16 @@ internal sealed class DockWindow : IDisposable
     private void EndIconDrag(bool commit, bool remove = false)
     {
         if (!dragging) return;
+        if (dragFrom < 0 || dragFrom >= settings.Items.Count || dragFrom >= entries.Count - 1
+            || entries[dragFrom] != settings.Items[dragFrom])
+        { dragging = false; FinishGhost(); return; }
         if (remove)
         {
             var item = entries[dragFrom];
             dragging = false; FinishGhost(false); RemoveEntry(item); suppressHover = true;
             return;
         }
-        if (commit && dragFrom != dragTo && dragTo >= 0)
+        if (commit && dragFrom != dragTo && dragTo >= 0 && dragTo < settings.Items.Count && dragTo < entries.Count - 1)
         {
             var item = settings.Items[dragFrom]; settings.Items.RemoveAt(dragFrom); settings.Items.Insert(dragTo, item);
             var entry = entries[dragFrom]; entries.RemoveAt(dragFrom); entries.Insert(dragTo, entry);
@@ -590,6 +613,7 @@ internal sealed class DockWindow : IDisposable
     }
     private void CancelInteraction()
     {
+        interactionVersion++;
         pressedIndex = -1;
         if (dragging) EndIconDrag(false);
         FinishGhost(); dragging = false; sortingSettles = false;
@@ -704,6 +728,32 @@ internal sealed class DockWindow : IDisposable
             Require(Native.WindowFromPoint(new() { X = left + (int)((inputSlot.X + inputSlot.Size / 2) * scale),
                 Y = top + (int)((RestGeometry.Baseline(height / scale) - inputSlot.Size / 2) * scale) }) == Handle,
                 "IconAreaHitsShapedInputWindow");
+            var interruptedSlot = RestGeometry.Slots[0];
+            double interruptedX = interruptedSlot.X + interruptedSlot.Size / 2;
+            double interruptedY = RestGeometry.Baseline(height / scale) - interruptedSlot.Size / 2;
+            Mouse(0x0201, interruptedX, interruptedY);
+            dragStartInterruptionForChecks = () => Native.SendMessage(Handle, 0x001F, 0, 0);
+            Mouse(0x0200, interruptedX + 10, interruptedY);
+            dragStartInterruptionForChecks = null;
+            Require(!dragging && ghost is null && pressedIndex == -1 && settings.Items.SequenceEqual(original),
+                "NativeCancelDuringDragPreparationDoesNotStartOrRemove");
+            Mouse(0x0201, interruptedX, interruptedY);
+            dragStartInterruptionForChecks = () => Native.SendMessage(Handle, 0x0215, 0, 0);
+            Mouse(0x0200, interruptedX + 10, interruptedY);
+            dragStartInterruptionForChecks = null;
+            Require(!dragging && ghost is null && pressedIndex == -1 && settings.Items.SequenceEqual(original),
+                "NativeCaptureLossDuringDragPreparationDoesNotStartOrRemove");
+            Mouse(0x0201, interruptedX, interruptedY);
+            dragStartInterruptionForChecks = () =>
+            {
+                Native.SendMessage(Handle, 0x001F, 0, 0);
+                Mouse(0x0201, interruptedX, interruptedY);
+            };
+            Mouse(0x0200, interruptedX + 10, interruptedY);
+            dragStartInterruptionForChecks = null;
+            Require(!dragging && ghost is null && pressedIndex == 0 && settings.Items.SequenceEqual(original),
+                "NewPressInvalidatesPreviousDragPreparation");
+            Native.SendMessage(Handle, 0x001F, 0, 0);
             bool autoHideBefore = settings.AutoHide;
             settings.AutoHide = true; CheckVisibility();
             Require(autoHidden, "AutoHideInitiallyRetractsDock");
@@ -853,6 +903,7 @@ internal sealed class DockWindow : IDisposable
         finally
         {
             checkingInteraction = false; CancelInteraction(); syntheticHover = false;
+            dragStartInterruptionForChecks = null;
             IconLoadDelayForChecks = 0; pointerOverForChecks = bottomEdgeForChecks = null; settings.AutoHide = originalAutoHide;
             SetSwitchingForChecks(null);
             SetShellDragForChecks(null);
