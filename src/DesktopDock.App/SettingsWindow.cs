@@ -13,7 +13,7 @@ internal sealed class SettingsWindow : Window
     private readonly ListBox applications;
     private readonly TextBlock status;
 
-    public SettingsWindow(DockSettings settings, Action apply, Action reload, Action quit, string recallShortcut, TaskbarEnhancement taskbar)
+    public SettingsWindow(DockSettings settings, Action apply, Action reload, Action quit, TaskbarEnhancement taskbar)
     {
         this.settings = settings; this.apply = apply; this.reload = reload;
         Title = "Desktop Dock · 设置";
@@ -27,15 +27,15 @@ internal sealed class SettingsWindow : Window
         var content = new StackPanel { Margin = new Thickness(30, 25, 30, 25) };
         var surface = new ScrollViewer { Content = content, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
         Content = surface;
-        content.Children.Add(new TextBlock { Text = "DESKTOP DOCK  /  0.1 preview.5", FontSize = 11, Foreground = Brushes.LightSteelBlue });
+        content.Children.Add(new TextBlock { Text = "DESKTOP DOCK  /  0.1 preview.6", FontSize = 11, Foreground = Brushes.LightSteelBlue });
         content.Children.Add(new TextBlock { Text = "让桌面，轻一点。", FontSize = 29, FontWeight = FontWeights.SemiBold, Margin = new(0, 10, 0, 8) });
-        content.Children.Add(new TextBlock { Text = "悬停放大 · 原生合成 · 随时恢复", Foreground = Brushes.LightSlateGray, Margin = new(0, 0, 0, 20) });
-        content.Children.Add(new TextBlock { Text = "召回快捷键：" + recallShortcut + "\n遮挡时召回，3 秒未操作 Dock 后隐藏。", FontSize = 11, Foreground = Brushes.LightSteelBlue, Margin = new(0, 0, 0, 16) });
+        content.Children.Add(new TextBlock { Text = "透明悬浮 · 轻盈倒影 · 圆润图标", Foreground = Brushes.LightSlateGray, Margin = new(0, 0, 0, 20) });
+        content.Children.Add(new TextBlock { Text = "鼠标在主屏底边停留约 0.2 秒唤出 Dock。\n停留在图标或菜单上保持显示，移开约 0.75 秒收起。", FontSize = 11, Foreground = Brushes.LightSteelBlue, Margin = new(0, 0, 0, 16) });
         AddSlider(content, "图标大小", 32, 80, settings.IconSize, v => settings.IconSize = v);
         AddSlider(content, "悬停放大", 1, 1.8, settings.Magnification, v => settings.Magnification = v);
         AddSlider(content, "底部间距", 0, 100, settings.BottomGap, v => settings.BottomGap = v);
-        AddCheck(content, "背景毛玻璃", settings.Blur, v => settings.Blur = v);
-        AddCheck(content, "浅色玻璃", settings.LightTheme, v => settings.LightTheme = v);
+        AddCheck(content, "图标倒影", settings.Reflections, v => settings.Reflections = v);
+        AddCheck(content, "浅色任务栏玻璃", settings.LightTheme, v => settings.LightTheme = v);
         AddCheck(content, "减少动画", settings.ReducedMotion, v => settings.ReducedMotion = v);
         AddCheck(content, "自动隐藏 Dock", settings.AutoHide, v => settings.AutoHide = v);
         AddCheck(content, "隐藏桌面图标（退出时恢复）", settings.HideDesktopIcons, v => settings.HideDesktopIcons = v);
@@ -43,7 +43,7 @@ internal sealed class SettingsWindow : Window
         AddCheck(content, "启用任务栏增强（退出时恢复）", settings.TaskbarEnhancement, v => settings.TaskbarEnhancement = v);
         AddCheck(content, "任务栏自动隐藏 · 顶边停留唤出", settings.TaskbarAutoHide, v => settings.TaskbarAutoHide = v);
         AddCheck(content, "任务栏玻璃效果", settings.TaskbarGlass, v => settings.TaskbarGlass = v);
-        content.Children.Add(new TextBlock { Text = "先在 Windows 中将主屏任务栏设为顶部。移开约 0.75 秒收起；开始菜单与托盘菜单操作时保持显示。玻璃明暗跟随上方的“浅色玻璃”。", FontSize = 11, Foreground = Brushes.LightSlateGray, TextWrapping = TextWrapping.Wrap, Margin = new(0, 5, 0, 8) });
+        content.Children.Add(new TextBlock { Text = "先在 Windows 中将主屏任务栏设为顶部。移开约 0.75 秒收起；开始菜单与托盘菜单操作时保持显示。玻璃明暗跟随上方的“浅色任务栏玻璃”。", FontSize = 11, Foreground = Brushes.LightSlateGray, TextWrapping = TextWrapping.Wrap, Margin = new(0, 5, 0, 8) });
         var taskbarStatus = new TextBlock { FontSize = 11, Foreground = Brushes.LightSteelBlue, TextWrapping = TextWrapping.Wrap };
         void UpdateTaskbarStatus() => taskbarStatus.Text = taskbar.Status + "\n" + taskbar.GlassStatus;
         UpdateTaskbarStatus(); taskbar.StatusChanged += UpdateTaskbarStatus;
@@ -62,7 +62,7 @@ internal sealed class SettingsWindow : Window
         actions.Children.Add(Button("＋ 文件夹", AddFolder));
         actions.Children.Add(Button("移除所选", RemoveSelected));
         content.Children.Add(actions);
-        content.Children.Add(new TextBlock { Text = "Dock 内拖动图标可调整顺序。", FontSize = 11, Foreground = Brushes.LightSlateGray, TextWrapping = TextWrapping.Wrap });
+        content.Children.Add(new TextBlock { Text = "桌面快捷方式可拖入固定；Dock 内拖动可排序，拖离较远后松手可移除入口。", FontSize = 11, Foreground = Brushes.LightSlateGray, TextWrapping = TextWrapping.Wrap });
         status = new TextBlock { FontSize = 11, Foreground = Brushes.LightSteelBlue, TextWrapping = TextWrapping.Wrap, Margin = new(0, 12, 0, 12) };
         content.Children.Add(status);
         content.Children.Add(Button("退出并恢复桌面", quit));
@@ -91,7 +91,7 @@ internal sealed class SettingsWindow : Window
         button.Click += (_, _) => action(); return button;
     }
 
-    private void RefreshItems() => applications.ItemsSource = settings.Items.Select(x => x.Name).ToArray();
+    internal void RefreshItems() => applications.ItemsSource = settings.Items.Select(x => x.Name).ToArray();
     private void AddApplication()
     {
         var dialog = new Microsoft.Win32.OpenFileDialog { Filter = "应用与快捷方式|*.exe;*.lnk;*.url|所有文件|*.*", Multiselect = true };

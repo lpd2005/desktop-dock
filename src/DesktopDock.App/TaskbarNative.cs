@@ -62,13 +62,18 @@ internal static class TaskbarNative
             ? new(true, (flags & 2) != 0 ? alpha : (byte)255, key, flags, topmost) : null;
     }
     public static bool Present(nint hwnd, bool show, TaskbarTransparency original)
+        => SetAlpha(hwnd, show ? original.Alpha : (byte)0, original) && (!show || Raise(hwnd));
+    public static bool SetAlpha(nint hwnd, byte alpha, TaskbarTransparency original)
     {
         long styles = Native.GetWindowLongPtr(hwnd, -20).ToInt64();
         if ((styles & 0x80000) == 0) Native.SetWindowLongPtr(hwnd, -20, new(styles | 0x80000));
-        if (!Native.SetLayeredWindowAttributes(hwnd, original.ColorKey, show ? original.Alpha : (byte)0, original.Flags | 2)) return false;
+        return Native.SetLayeredWindowAttributes(hwnd, original.ColorKey, alpha, original.Flags | 2);
+    }
+    public static bool Raise(nint hwnd)
+    {
         // Explorer can lower its taskbar behind a foreground full-screen window.
         // Only change stacking when recalled; never use SWP_SHOWWINDOW or change its rectangle.
-        return !show || Native.SetWindowPos(hwnd, new(-1), 0, 0, 0, 0, 0x0013 | 0x0200 | 0x0400);
+        return Native.SetWindowPos(hwnd, new(-1), 0, 0, 0, 0, 0x0013 | 0x0200 | 0x0400);
     }
     public static bool RestoreTransparency(nint hwnd, TaskbarTransparency original)
     {

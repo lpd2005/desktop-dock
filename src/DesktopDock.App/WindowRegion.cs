@@ -23,7 +23,7 @@ internal sealed class WindowRegion(nint hwnd)
             Native.DeleteObject(part);
             if (combined == 0) { Native.DeleteObject(region); throw new System.ComponentModel.Win32Exception(); }
         }
-        if (Native.SetWindowRgn(hwnd, region, true) == 0)
+        if (Native.SetWindowRgn(hwnd, region, false) == 0)
         {
             Native.DeleteObject(region);
             throw new System.ComponentModel.Win32Exception();

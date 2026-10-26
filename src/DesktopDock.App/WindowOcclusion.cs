@@ -25,12 +25,12 @@ internal sealed class WindowOcclusion(nint dock)
             long style = Native.GetWindowLongPtr(hwnd, -16).ToInt64();
             long extended = Native.GetWindowLongPtr(hwnd, -20).ToInt64();
             Native.GetWindowThreadProcessId(hwnd, out uint pid);
-            // Own menus/tooltips must not hide the Dock; a captioned preferences window can cover it.
-            if (pid == Environment.ProcessId && (style & 0x00C00000) == 0) return false;
-            if (pid != Environment.ProcessId && (extended & 0x08000000) != 0) return false;
+            // Our settings, dialogs, menus and tooltips are Dock UI, not app coverage.
+            if (pid == Environment.ProcessId) return false;
+            if ((extended & 0x08000000) != 0) return false;
             var name = new StringBuilder(128);
             Native.GetClassName(hwnd, name, name.Capacity);
-            if (name.ToString() is "Progman" or "WorkerW" or "Shell_TrayWnd" or "Shell_SecondaryTrayWnd") return false;
+            if (name.ToString() is "Progman" or "WorkerW" or "Shell_TrayWnd" or "Shell_SecondaryTrayWnd" or "SysDragImage") return false;
             return WindowAvoidance.Overlaps(Frame(hwnd), area);
         }
         if (WindowsForChecks is not null) return WindowsForChecks().Any(Inspect);

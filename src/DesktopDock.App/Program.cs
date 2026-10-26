@@ -17,7 +17,7 @@ internal static class Program
         string data = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "DesktopDock");
         int dataIndex = Array.IndexOf(args, "--data-dir");
         if (dataIndex >= 0 && dataIndex + 1 < args.Length) data = Path.GetFullPath(args[dataIndex + 1]);
-        bool preview = args.Contains("--preview") || args.Contains("--smoke-test");
+        bool preview = args.Contains("--preview") || args.Contains("--smoke-test") || args.Contains("--drag-test");
         Directory.CreateDirectory(data);
         if (args.Contains("--taskbar-guard")) return TaskbarRecovery.RunGuard(args, data);
         if (args.Contains("--taskbar-test")) return TaskbarChecks.Run(data);
@@ -83,9 +83,10 @@ internal static class Program
             controller = new(application, data, desktop, preview, args.Contains("--stress"));
             application.Startup += async (_, _) =>
             {
-                await controller.Start();
                 if (args.Contains("--settings")) controller.OpenSettings();
+                await controller.Start();
                 if (args.Contains("--smoke-test")) await controller.RunSmokeTest();
+                if (args.Contains("--drag-test")) await controller.RunDragTest(args.Contains("--hold-drag"));
             };
             return application.Run();
         }
@@ -115,7 +116,7 @@ internal sealed class Controller : IDisposable
     private readonly Forms.NotifyIcon tray;
     private readonly DockWindow dock;
     private readonly TaskbarEnhancement taskbar;
-    private (bool Enabled, bool AutoHide, bool Glass, bool Light)? taskbarConfiguration;
+    private (bool Enabled, bool AutoHide, bool Glass, bool Light, bool ReducedMotion)? taskbarConfiguration;
     private SettingsWindow? settingsWindow;
     private bool disposed;
 
@@ -144,12 +145,12 @@ internal sealed class Controller : IDisposable
         }
         if (preview) settings.TaskbarEnhancement = false;
         taskbar = new(data);
-        dock = new(settings, OpenSettings, Save, Recover, Quit, toggleSettings: ToggleSettings);
+        dock = new(settings, OpenSettings, DockChanged, Recover, Quit, toggleSettings: ToggleSettings);
         dock.RestoreTaskbarRequested = RestoreTaskbar;
         tray = new Forms.NotifyIcon { Text = "Desktop Dock", Icon = System.Drawing.SystemIcons.Application, Visible = true };
         tray.DoubleClick += (_, _) => application.Dispatcher.Invoke(OpenSettings);
         var menu = new Forms.ContextMenuStrip();
-        menu.Items.Add("召回 Dock（" + dock.RecallShortcut + "）", null, (_, _) => application.Dispatcher.Invoke(dock.Summon));
+        menu.Items.Add("显示 Dock", null, (_, _) => application.Dispatcher.Invoke(dock.Summon));
         menu.Items.Add("Dock 设置…", null, (_, _) => application.Dispatcher.Invoke(OpenSettings));
         menu.Items.Add("恢复桌面图标", null, (_, _) => application.Dispatcher.Invoke(Recover));
         menu.Items.Add("唤出顶部任务栏", null, (_, _) => application.Dispatcher.Invoke(taskbar.Reveal));
@@ -169,10 +170,11 @@ internal sealed class Controller : IDisposable
     {
         if (!preview) SettingsStore.Save(Path.Combine(data, "settings.json"), settings);
     }
+    private void DockChanged() { Save(); settingsWindow?.RefreshItems(); }
     private void Apply() { Save(); desktop.Apply(settings.HideDesktopIcons); dock.ApplySettings(); ApplyTaskbar(); }
     private void ApplyTaskbar()
     {
-        var current = (settings.TaskbarEnhancement, settings.TaskbarAutoHide, settings.TaskbarGlass, settings.LightTheme);
+        var current = (settings.TaskbarEnhancement, settings.TaskbarAutoHide, settings.TaskbarGlass, settings.LightTheme, settings.ReducedMotion);
         if (taskbarConfiguration == current) return;
         taskbarConfiguration = current;
         taskbar.Apply(settings);
@@ -186,7 +188,7 @@ internal sealed class Controller : IDisposable
     {
         if (settingsWindow is null)
         {
-            settingsWindow = new(settings, Apply, () => { Save(); _ = dock.LoadIcons(); }, Quit, dock.RecallShortcut, taskbar);
+            settingsWindow = new(settings, Apply, () => { Save(); _ = dock.LoadIcons(); }, Quit, taskbar);
             settingsWindow.Closed += (_, _) => { settingsWindow = null; dock.RefreshOcclusion(); };
             settingsWindow.Show();
             dock.RefreshOcclusion();
@@ -213,6 +215,15 @@ internal sealed class Controller : IDisposable
     }
     private void Quit() { taskbar.Stop(); desktop.Restore(); application.Shutdown(); }
 
+    public async Task RunDragTest(bool holdForInspection = false)
+    {
+        dock.UseOcclusionWindowsForChecks(() => []);
+        await Task.Delay(400); dock.CheckVisibility();
+        var checks = await dock.CheckDragging(Path.Combine(data, "drag-checks"), holdForInspection);
+        File.WriteAllText(Path.Combine(data, "drag-report.json"), JsonSerializer.Serialize(checks, new JsonSerializerOptions { WriteIndented = true }));
+        Quit();
+    }
+
     public async Task RunSmokeTest()
     {
         using var process = Process.GetCurrentProcess();
@@ -231,28 +242,43 @@ internal sealed class Controller : IDisposable
             await RegressionProbe.WaitReady(anchor, probeData);
             nint anchorWindow = RegressionProbe.Handle(probeData);
             testWindows.Add(anchorWindow);
+            dock.SetBottomEdgeForChecks(false); dock.SetPointerOverForChecks(false);
             dock.UseOcclusionWindowsForChecks(() => testWindows.ToArray());
             await Task.Delay(400);
             dock.CheckVisibility();
-            Require(dock.IsDockVisible && dock.ExcludedFromAltTab && dock.HotkeyRegistered, "Initial visibility, Alt+Tab exclusion or hotkey registration failed.");
+            Require(dock.IsDockVisible && dock.ExcludedFromAltTab, "Initial visibility or Alt+Tab exclusion failed.");
 
             await RegressionProbe.SetMode(anchor, probeData, "covered");
             dock.RefreshOcclusion();
             Require(!dock.IsDockVisible, "Ordinary overlapping window did not hide Dock.");
-            dock.InvokeHotkeyForChecks();
-            await WaitFor(() => dock.IsDockVisible, "Hotkey did not recall covered Dock.");
-            await Task.Delay(3300);
-            dock.CheckVisibility();
+            dock.SetShellDragForChecks(new(true, true, true, new() { X = 100, Y = 100 }));
+            Require(dock.IsDockVisible, "Shell drag did not override coverage before OLE enter.");
+            await Task.Delay(700); dock.CheckVisibility();
+            Require(dock.IsDockVisible, "Dock disappeared during external drag.");
+            dock.SetShellDragForChecks(new(false, false, false, new()));
+            await Task.Delay(900); dock.CheckVisibility();
+            Require(!dock.IsDockVisible, "Coverage hiding did not resume after drag release.");
+            dock.SetShellDragForChecks(null);
+            dock.SetBottomEdgeForChecks(true);
+            Require(!dock.IsDockVisible, "A brief bottom edge touch must not reveal Dock immediately.");
+            await Task.Delay(300); dock.CheckVisibility();
+            Require(dock.IsDockVisible, "Bottom edge dwell did not reveal covered Dock.");
+            dock.SetBottomEdgeForChecks(false);
+            await Task.Delay(900); dock.CheckVisibility();
             bool recallTimedOut = !dock.IsDockVisible;
-            Require(recallTimedOut, "Recall did not hide after three idle seconds.");
-            dock.InvokeHotkeyForChecks();
-            await WaitFor(() => dock.IsDockVisible, "Second recall failed.");
-            await Task.Delay(1800);
-            dock.InteractForChecks();
-            await Task.Delay(1400); dock.CheckVisibility();
+            Require(recallTimedOut, "Dock did not hide after the edge leave delay.");
+            dock.SetBottomEdgeForChecks(true); await Task.Delay(300); dock.CheckVisibility();
+            dock.SetPointerOverForChecks(true); dock.SetBottomEdgeForChecks(false);
+            await Task.Delay(1500); dock.CheckVisibility();
             bool interactionResetTimeout = dock.IsDockVisible;
-            await Task.Delay(1800); dock.CheckVisibility();
-            Require(interactionResetTimeout && !dock.IsDockVisible, "Interaction reset or subsequent timeout failed.");
+            dock.SetPointerOverForChecks(false); await Task.Delay(900); dock.CheckVisibility();
+            Require(interactionResetTimeout && !dock.IsDockVisible, "Hover preservation or leave hiding failed.");
+
+            dock.SetBottomEdgeForChecks(true); await Task.Delay(300); dock.CheckVisibility();
+            dock.SetBottomEdgeForChecks(false);
+            bool menuStaysOpen = await dock.CheckMenuPersistence();
+            Require(menuStaysOpen, "Native context menu did not stay open while the Dock was covered.");
+            await Task.Delay(900); dock.CheckVisibility();
 
             dock.SetSwitchingForChecks(true);
             await RegressionProbe.SetMode(anchor, probeData, "normal");
@@ -269,11 +295,26 @@ internal sealed class Controller : IDisposable
             Require(settingsOpened, "Settings did not open.");
             nint settingsHandle = new System.Windows.Interop.WindowInteropHelper(settingsWindow!).Handle;
             bool settingsExcluded = (Native.GetWindowLongPtr(settingsHandle, -20).ToInt64() & (0x80 | 0x40000)) == 0x80;
+            testWindows.Add(settingsHandle);
+            settingsWindow!.WindowState = WindowState.Maximized;
+            await Task.Delay(200); dock.RefreshOcclusion();
+            await Task.Delay(350); dock.CheckVisibility();
+            bool settingsOverlapsDock = WindowAvoidance.Overlaps(WindowOcclusion.Frame(settingsHandle), WindowOcclusion.Frame(dock.Handle));
+            bool settingsKeepsDockVisible = settingsOverlapsDock && dock.IsDockVisible;
+            Require(settingsKeepsDockVisible, "Dock settings covering the Dock must not hide it.");
+            await RegressionProbe.SetMode(anchor, probeData, "covered");
+            dock.RefreshOcclusion();
+            bool otherWindowStillHides = !dock.IsDockVisible;
+            Require(otherWindowStillHides, "Ignoring Dock settings must not ignore another application's coverage.");
+            await RegressionProbe.SetMode(anchor, probeData, "normal");
+            settingsWindow.WindowState = WindowState.Normal;
+            dock.RefreshOcclusion(); await Task.Delay(350); dock.CheckVisibility();
             dock.InvokeSettingsEntry(); await Task.Delay(150);
             bool settingsMinimized = settingsWindow?.WindowState == WindowState.Minimized;
             dock.InvokeSettingsEntry(); await Task.Delay(200);
             bool settingsRestored = settingsWindow is { IsVisible: true, WindowState: WindowState.Normal };
             Require(settingsExcluded && settingsMinimized && settingsRestored, "Settings taskbar toggle or Alt+Tab exclusion failed.");
+            testWindows.Remove(settingsHandle);
             settingsWindow?.Close();
 
             string host = Environment.ProcessPath!;
@@ -327,6 +368,7 @@ internal sealed class Controller : IDisposable
 
             await RegressionProbe.SetMode(anchor, probeData, "normal");
             dock.RefreshOcclusion(); await Task.Delay(400); dock.CheckVisibility();
+            var dragChecks = await dock.CheckDragging(Path.Combine(data, "drag-checks"));
             dock.ClearFrameSamples();
             for (int i = 0; i < 180; i++) { dock.PreviewWave(.5 + Math.Sin(i * .045) * .42); await Task.Delay(8); }
             var hoveredInput = dock.VerifyInputRegion();
@@ -350,11 +392,14 @@ internal sealed class Controller : IDisposable
             await Task.Delay(5000); process.Refresh();
             var report = new
             {
-                Version = "0.1.0-preview.5", dock.HardwareRendering, dock.HostBackdrop, dock.IconCount,
-                dock.RecallShortcut, dock.HotkeyRegistered, RecallTimedOut = recallTimedOut, InteractionResetTimeout = interactionResetTimeout,
+                Version = "0.1.0-preview.6", dock.HardwareRendering, dock.HostBackdrop, dock.IconCount,
+                BottomEdgeReveals = true, EdgeLeaveHides = recallTimedOut, HoverKeepsVisible = interactionResetTimeout,
+                ContextMenuStaysOpen = menuStaysOpen,
                 DockExcludedFromAltTab = dock.ExcludedFromAltTab, SettingsExcludedFromAltTab = settingsExcluded, NoTaskSwitchFlash = noImmediateFlash,
                 SettingsOpened = settingsOpened, SettingsMinimized = settingsMinimized, SettingsRestored = settingsRestored,
+                SettingsKeepsDockVisible = settingsKeepsDockVisible, OtherWindowStillHides = otherWindowStillHides,
                 ApplicationChecks = applicationChecks, Avoidance = avoidance,
+                DragChecks = dragChecks,
                 InputRegion = input, HoveredInputRegion = hoveredInput,
                 IdleCpuPercent = (process.TotalProcessorTime - initialCpu).TotalMilliseconds / watch.Elapsed.TotalMilliseconds / Environment.ProcessorCount * 100,
                 WorkingSetMiB = process.WorkingSet64 / 1048576d, SampleSeconds = watch.Elapsed.TotalSeconds,

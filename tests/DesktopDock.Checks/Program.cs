@@ -66,13 +66,12 @@ Check(!WindowAvoidance.Overlaps(new(0, 0, 1920, 950), dockArea), "Touching top e
 Check(!WindowAvoidance.Overlaps(new(1920, 0, 3840, 1080), dockArea), "Another monitor does not cover Dock");
 var visibility = new DockVisibility();
 Check(!visibility.ShouldShow(true, false, 0), "Covered Dock is hidden");
-visibility.Summon(1);
-Check(visibility.ShouldShow(true, false, 1), "Hotkey temporarily overrides coverage");
-Check(visibility.ShouldShow(true, false, 3.99), "Recall remains available before timeout");
-Check(!visibility.ShouldShow(true, false, 4), "Recall expires after exactly three idle seconds");
-visibility.Summon(5); visibility.Interact(7);
-Check(visibility.ShouldShow(true, false, 9.99), "Dock interaction resets recall timeout");
-Check(!visibility.ShouldShow(true, false, 10), "Reset timeout also expires");
+Check(!visibility.ShouldShow(true, false, 1, atEdge: true), "Brief bottom edge touch does not reveal");
+Check(visibility.ShouldShow(true, false, 1.2, atEdge: true), "Bottom edge dwell reveals covered Dock");
+Check(visibility.ShouldShow(true, false, 8, atEdge: true), "Staying on the bottom edge keeps Dock available");
+Check(visibility.ShouldShow(true, false, 8.5, overDock: true), "Moving onto icons preserves the reveal");
+Check(visibility.ShouldShow(true, false, 9.2), "Leaving has a grace interval");
+Check(!visibility.ShouldShow(true, false, 9.3), "Leaving for 750 ms hides covered Dock");
 Check(!visibility.ShouldShow(false, false, 11), "Uncovered reveal waits for stability");
 Check(visibility.ShouldShow(false, false, 11.3), "Stable uncovered Dock reappears");
 Check(!visibility.ShouldShow(false, true, 12), "Task switching suppresses reveal");
@@ -80,8 +79,13 @@ Check(!visibility.ShouldShow(false, false, 12.1), "No immediate flash after task
 Check(visibility.ShouldShow(false, false, 12.4), "Reveal resumes only after stable transition");
 Check(!visibility.ShouldShow(true, false, 12.5), "Covering again hides immediately");
 visibility.Summon(13);
-Check(visibility.ShouldShow(false, false, 14), "Clear state stabilizes while recalled");
-Check(visibility.ShouldShow(false, false, 16.1), "No hide-reveal blink when recall expires after coverage clears");
+Check(visibility.ShouldShow(false, false, 13), "Tray can still show Dock");
+Check(visibility.ShouldShow(false, false, 14), "No blink when temporary reveal ends after coverage clears");
+Check(visibility.ShouldShow(true, false, 15, interacting: true), "Menu or drag keeps covered Dock visible");
+Check(visibility.ShouldShow(true, false, 25, interacting: true), "Long interaction never times out");
+Check(!visibility.ShouldShow(true, true, 26, atEdge: true, interacting: true), "Task switch suppresses even active interaction");
+Check(!visibility.ShouldShow(true, false, 26.01, atEdge: true), "Task switch resets edge dwell");
+Check(!visibility.ShouldShow(false, false, 27, autoHide: true), "Auto-hide stays hidden without edge input");
 Check(AppClick.Decide(false, false, false) == AppClickAction.Launch, "Unopened application launches");
 Check(AppClick.Decide(true, true, false) == AppClickAction.Minimize, "Active app minimizes on repeat click");
 Check(AppClick.Decide(true, false, true) == AppClickAction.Restore, "Minimized app restores");
@@ -104,4 +108,62 @@ Check(!taskbar.Update(35, false, false, false, false), "Manual recall expires");
 Check(!new DockSettings().TaskbarEnhancement && new DockSettings().TaskbarGlass, "Taskbar enhancement is opt-in");
 var oldSettings = System.Text.Json.JsonSerializer.Deserialize<DockSettings>("{\"IconSize\":48}")!;
 Check(!oldSettings.TaskbarEnhancement, "Existing configuration never silently takes control of native taskbar");
+foreach (int count in new[] { 1, 8, 20, 40 })
+foreach (int from in Enumerable.Range(0, count))
+foreach (int to in Enumerable.Range(0, count))
+{
+    var order = DockReorder.Order(count + 1, from, to, count);
+    Check(order.Length == count + 1 && order.Distinct().Count() == count + 1, "Reordering preserves every item");
+    Check(order[^1] == count && order[to] == from, "Reorder destination and fixed settings slot");
+    Check(order.Where(x => x != from).SequenceEqual(Enumerable.Range(0, count + 1).Where(x => x != from)), "Other entries keep their relative order");
+}
+Check(DockReorder.Order(5, 4, 0, 4).SequenceEqual(Enumerable.Range(0, 5)), "Settings cannot be reordered");
+Check(!DockReorder.Moved(4, 4) && DockReorder.Moved(5, 4), "A small movement remains a click");
+var dropGeometry = DockLayout.Calculate(9, 48, 1.65, null, 1920);
+Check(DockReorder.Insertion(dropGeometry, 8, 0) == 0 && DockReorder.Insertion(dropGeometry, 8, 1920) == 8, "Drop slots stay before settings");
+Check(DockReorder.Target(dropGeometry, 8, 0, 1920) == 7 && DockReorder.Target(dropGeometry, 8, 7, 0) == 0, "Live reorder follows stable icon centers");
+Check(!DockReorder.RemoveOnRelease(dropGeometry, 1920, 250, 960, dropGeometry.BodyTop(250) - 40), "A nearby outside release does not remove");
+Check(DockReorder.RemoveOnRelease(dropGeometry, 1920, 250, 960, dropGeometry.BodyTop(250) - 90), "A far upward release removes an entry");
+Check(DockReorder.RemoveOnRelease(dropGeometry, 1920, 250, dropGeometry.BodyLeft(1920) - 90, dropGeometry.Baseline(250)), "A far sideways release removes an entry");
+var transition = new TimedTransition();
+transition.Begin(1, 0, .22);
+double halfway = transition.Sample(.1);
+Check(halfway > 0 && halfway < 1, "Transition has intermediate visual frames");
+transition.Begin(0, .1, .18);
+Check(Math.Abs(transition.Value - halfway) < .00001, "Reversing keeps the current position");
+Check(transition.Sample(.5) == 0 && !transition.Active, "Reversed transition settles and stops");
+transition.Begin(1, 1, .22); transition.Sample(1.1); transition.Begin(1, 1.1, .22);
+Check(transition.Sample(1.23) == 1 && !transition.Active, "Repeated targets do not restart an animation");
+var shellDrag = new ShellDragIntent();
+Check(!shellDrag.Update(true, true, false, false, false, 10, 10), "Desktop press alone is not a drag");
+Check(shellDrag.Update(true, true, false, false, false, 20, 20), "Desktop movement detects drag without WinEvent");
+Check(shellDrag.Update(true, false, false, false, false, 900, 900), "Drag stays active after leaving its source");
+Check(!shellDrag.Update(false, false, false, false, false, 900, 900), "Release clears the drag hold");
+Check(shellDrag.Update(true, true, true, false, false, 500, 500), "Capture recognizes a drag missed at its start");
+Check(!shellDrag.Update(true, true, true, false, true, 500, 500), "Task switch or Escape clears drag hold");
+Check(!shellDrag.Update(true, false, false, false, false, 1, 1), "Other app press is not a Shell drag");
+Check(!shellDrag.Update(true, false, false, false, false, 100, 100), "Moving an app window does not summon Dock");
+shellDrag.Update(false, false, false, false, false, 0, 0);
+Check(shellDrag.Update(true, false, false, true, false, 0, 0), "Explicit drag event is still supported");
+Check(!shellDrag.Update(false, false, false, true, false, 0, 0), "Stale event cannot keep Dock shown after release");
+byte[] reflectedSource = new byte[16 * 16 * 4];
+for (int i = 0; i < reflectedSource.Length; i += 4)
+{
+    reflectedSource[i] = (byte)(i / 64 + 1); reflectedSource[i + 1] = 40;
+    reflectedSource[i + 2] = 80; reflectedSource[i + 3] = 160;
+}
+byte[] reflection = IconReflection.Create(reflectedSource, 16);
+Check(reflection[0] == Math.Round(reflectedSource[15 * 64] * IconReflection.Opacity), "Reflection mirrors the bottom source row");
+Check(reflection[3] > reflection[64 + 3] && reflection[64 + 3] > reflection[128 + 3], "Reflection fades away from the baseline");
+Check(reflection[10 * 64 + 3] > 0, "The full mirrored image is retained before vertical compression");
+Check(reflection.Skip(15 * 64).All(x => x == 0), "Reflection ends in full transparency");
+for (int i = 0; i < reflection.Length; i += 4)
+    Check(reflection[i] <= reflection[i + 3] && reflection[i + 1] <= reflection[i + 3] && reflection[i + 2] <= reflection[i + 3], "Reflection keeps premultiplied alpha");
+foreach (double iconSize in new[] { 32d, 48, 80 })
+{
+    var reflectedGeometry = DockLayout.Calculate(8, iconSize, 1.8, 960, 1920);
+    Check(reflectedGeometry.Slots.All(x => reflectedGeometry.Baseline(250) - x.Size >= 0), "Magnified icons fit the host above the reflection plane");
+    Check(reflectedGeometry.Baseline(250) + 2 + reflectedGeometry.Slots.Max(x => x.Size) * IconReflection.Depth <= 250 - DockGeometry.Foot + .01, "Reflections fit below the shared baseline");
+}
+Check(System.Text.Json.JsonSerializer.Deserialize<DockSettings>("{}")!.Reflections, "Existing settings default to reflections");
 Console.WriteLine($"PASS: {checks} geometry, persistence and interaction checks.");

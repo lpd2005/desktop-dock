@@ -5,10 +5,10 @@ public sealed record DockGeometry(DockSlot[] Slots, double Width, double IconSiz
 {
     public const double Padding = 14;
     public const double Foot = 10;
-    public const double IconInset = 9;
+    public double ReflectionSpace => IconSize * IconReflection.Depth * 1.8 + 2;
     public double BodyLeft(double width) => (width - Width) / 2;
-    public double BodyTop(double height) => height - Foot - IconSize - 22;
-    public double Baseline(double height) => height - Foot - IconInset;
+    public double BodyTop(double height) => Baseline(height) - IconSize - 6;
+    public double Baseline(double height) => height - Foot - ReflectionSpace;
     public int HitIcon(double x, double y, double height)
     {
         double bottom = Baseline(height);

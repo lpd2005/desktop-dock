@@ -10,6 +10,7 @@ public sealed class DockSettings
     public double Magnification { get; set; } = 1.65;
     public double BottomGap { get; set; } = 12;
     public bool Blur { get; set; } = true;
+    public bool Reflections { get; set; } = true;
     public bool LightTheme { get; set; } = true;
     public bool HideDesktopIcons { get; set; }
     public bool AutoHide { get; set; }

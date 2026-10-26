@@ -19,24 +19,34 @@ internal sealed class CompositionRenderer : IDisposable
     private readonly DesktopWindowTarget target;
     private readonly ContainerVisual root;
     private readonly ContainerVisual row;
-    private readonly SpriteVisual glass;
-    private readonly SpriteVisual tint;
-    private readonly CompositionRoundedRectangleGeometry pill;
-    private readonly CompositionRoundedRectangleGeometry tintPill;
+    private readonly ContainerVisual reflectionRow;
     private readonly ID3D11Device d3d;
     private readonly ID2D1Device d2d;
     private readonly CompositionGraphicsDevice graphics;
-    private readonly List<SpriteVisual> icons = [];
-    private readonly List<CompositionDrawingSurface> surfaces = [];
-    private readonly ShapeVisual rim;
-    private readonly CompositionRoundedRectangleGeometry rimGeometry;
-    private readonly CompositionSpriteShape rimStroke;
-    private readonly SpriteVisual separator;
+    private readonly List<IconVisual> icons = [];
+    private readonly SpriteVisual insertion;
+    private readonly ShapeVisual placeholder;
+    private readonly CompositionRoundedRectangleGeometry placeholderGeometry;
     private bool disposed;
 
     public bool HardwareRendering { get; }
-    public bool HostBackdrop { get; private set; }
+    public bool HostBackdrop => false;
     public int IconCount => icons.Count;
+    public bool OrderingActive { get; private set; }
+    internal IReadOnlyList<object> IconIdentities => icons.Select(icon => (object)icon.Image).ToArray();
+
+    private sealed class IconVisual(SpriteVisual image, SpriteVisual reflection,
+        CompositionDrawingSurface imageSurface, CompositionDrawingSurface reflectionSurface) : IDisposable
+    {
+        public SpriteVisual Image { get; } = image;
+        public SpriteVisual Reflection { get; } = reflection;
+        public SpringMotion X { get; } = new();
+        public void Dispose()
+        {
+            Image.Brush?.Dispose(); Reflection.Brush?.Dispose();
+            Image.Dispose(); Reflection.Dispose(); imageSurface.Dispose(); reflectionSurface.Dispose();
+        }
+    }
 
     public CompositionRenderer(nint hwnd)
     {
@@ -44,72 +54,49 @@ internal sealed class CompositionRenderer : IDisposable
         target = CompositionInterop.CreateTarget(compositor, hwnd);
         root = compositor.CreateContainerVisual();
         row = compositor.CreateContainerVisual();
+        reflectionRow = compositor.CreateContainerVisual();
         target.Root = root;
         try { d3d = D3D11.D3D11CreateDevice(DriverType.Hardware, DeviceCreationFlags.BgraSupport); HardwareRendering = true; }
         catch { d3d = D3D11.D3D11CreateDevice(DriverType.Warp, DeviceCreationFlags.BgraSupport); }
         using (var dxgi = d3d.QueryInterface<IDXGIDevice>()) d2d = D2D1.D2D1CreateDevice(dxgi, null);
         graphics = CompositionInterop.CreateGraphics(compositor, d2d.NativePointer);
-        glass = compositor.CreateSpriteVisual();
-        pill = compositor.CreateRoundedRectangleGeometry();
-        glass.Clip = compositor.CreateGeometricClip(pill);
-        tint = compositor.CreateSpriteVisual();
-        tintPill = compositor.CreateRoundedRectangleGeometry();
-        tint.Clip = compositor.CreateGeometricClip(tintPill);
-        var shadow = compositor.CreateDropShadow();
-        shadow.BlurRadius = 14;
-        shadow.Opacity = .18f;
-        shadow.Offset = new Vector3(0, 3, 0);
-        glass.Shadow = shadow;
-        rim = compositor.CreateShapeVisual();
-        rimGeometry = compositor.CreateRoundedRectangleGeometry();
-        rimStroke = compositor.CreateSpriteShape(rimGeometry);
-        rimStroke.StrokeThickness = 1;
-        rim.Shapes.Add(rimStroke);
-        separator = compositor.CreateSpriteVisual();
-        root.Children.InsertAtTop(glass);
-        root.Children.InsertAtTop(tint);
-        root.Children.InsertAtTop(rim);
-        root.Children.InsertAtTop(separator);
+        insertion = compositor.CreateSpriteVisual();
+        insertion.Brush = compositor.CreateColorBrush(WColor.FromArgb(245, 110, 180, 255));
+        placeholder = compositor.CreateShapeVisual();
+        placeholderGeometry = compositor.CreateRoundedRectangleGeometry();
+        var outline = compositor.CreateSpriteShape(placeholderGeometry);
+        outline.StrokeThickness = 1.5f;
+        outline.StrokeBrush = compositor.CreateColorBrush(WColor.FromArgb(160, 200, 222, 250));
+        outline.FillBrush = compositor.CreateColorBrush(WColor.FromArgb(28, 225, 238, 255));
+        placeholder.Shapes.Add(outline);
+        root.Children.InsertAtTop(reflectionRow);
+        root.Children.InsertAtTop(placeholder);
         root.Children.InsertAtTop(row);
+        root.Children.InsertAtTop(insertion);
     }
 
     public void SetTheme(DockSettings settings)
     {
-        HostBackdrop = false;
-        var oldGlass = glass.Brush;
-        if (settings.Blur && HardwareRendering)
-        {
-            try { glass.Brush = compositor.CreateHostBackdropBrush(); HostBackdrop = true; }
-            catch { glass.Brush = compositor.CreateColorBrush(settings.LightTheme ? WColor.FromArgb(225, 224, 230, 239) : WColor.FromArgb(225, 35, 40, 49)); }
-        }
-        else glass.Brush = compositor.CreateColorBrush(settings.LightTheme ? WColor.FromArgb(240, 224, 230, 239) : WColor.FromArgb(240, 35, 40, 49));
-        oldGlass?.Dispose();
-        var gradient = compositor.CreateLinearGradientBrush();
-        gradient.StartPoint = Vector2.Zero; gradient.EndPoint = Vector2.UnitY;
-        gradient.ColorStops.Add(compositor.CreateColorGradientStop(0, settings.LightTheme ? WColor.FromArgb(146, 255, 255, 255) : WColor.FromArgb(116, 87, 94, 110)));
-        gradient.ColorStops.Add(compositor.CreateColorGradientStop(1, settings.LightTheme ? WColor.FromArgb(98, 215, 226, 244) : WColor.FromArgb(132, 27, 33, 46)));
-        var oldTint = tint.Brush; tint.Brush = gradient; oldTint?.Dispose();
-        var oldStroke = rimStroke.StrokeBrush;
-        rimStroke.StrokeBrush = compositor.CreateColorBrush(settings.LightTheme ? WColor.FromArgb(190, 255, 255, 255) : WColor.FromArgb(85, 225, 235, 255));
-        oldStroke?.Dispose();
-        var oldSeparator = separator.Brush;
-        separator.Brush = compositor.CreateColorBrush(settings.LightTheme ? WColor.FromArgb(65, 32, 46, 65) : WColor.FromArgb(65, 235, 241, 250));
-        oldSeparator?.Dispose();
+        // The desktop itself is the background: no enclosing panel or border.
+        reflectionRow.IsVisible = settings.Reflections;
     }
 
-    public void ClearIcons()
+    private void ClearIcons()
     {
         row.Children.RemoveAll();
-        foreach (var icon in icons) { icon.Brush?.Dispose(); icon.Dispose(); }
-        foreach (var surface in surfaces) surface.Dispose();
-        icons.Clear(); surfaces.Clear();
+        reflectionRow.Children.RemoveAll();
+        foreach (var icon in icons) icon.Dispose();
+        icons.Clear();
     }
 
-    public unsafe void AddIcon(byte[] pixels)
+    private unsafe (SpriteVisual Image, CompositionDrawingSurface Surface) CreateImage(byte[] pixels)
     {
         int resolution = IconService.Resolution;
         var surface = graphics.CreateDrawingSurface(new Windows.Foundation.Size(resolution, resolution),
             DirectXPixelFormat.B8G8R8A8UIntNormalized, DirectXAlphaMode.Premultiplied);
+        SpriteVisual? icon = null;
+        try
+        {
         CompositionInterop.Draw(surface, (pointer, offset) =>
         {
             Marshal.AddRef(pointer);
@@ -124,41 +111,127 @@ internal sealed class CompositionRenderer : IDisposable
                     1, Vortice.Direct2D1.InterpolationMode.Linear, null, null);
             }
         });
-        surfaces.Add(surface);
-        var icon = compositor.CreateSpriteVisual();
+        icon = compositor.CreateSpriteVisual();
         icon.Brush = compositor.CreateSurfaceBrush(surface);
         icon.Size = new Vector2(resolution);
-        row.Children.InsertAtTop(icon);
-        icons.Add(icon);
+        return (icon, surface);
+        }
+        catch { icon?.Brush?.Dispose(); icon?.Dispose(); surface.Dispose(); throw; }
     }
 
-    public void Layout(DockGeometry geometry, float width, float height, float dpiScale)
+    private IconVisual CreateIcon(byte[] pixels)
+    {
+        var icon = CreateImage(pixels);
+        try
+        {
+            var reflection = CreateImage(IconReflection.Create(pixels, IconService.Resolution));
+            return new(icon.Image, reflection.Image, icon.Surface, reflection.Surface);
+        }
+        catch { icon.Image.Brush?.Dispose(); icon.Image.Dispose(); icon.Surface.Dispose(); throw; }
+    }
+
+    public void SynchronizeIcons(IReadOnlyList<DockItem> previous, IReadOnlyList<DockItem> desired,
+        byte[][] pixels, DockGeometry geometry, float width, float height, float scale)
+    {
+        var available = new Dictionary<string, Queue<IconVisual>>(StringComparer.OrdinalIgnoreCase);
+        for (int i = 0; i < Math.Min(previous.Count, icons.Count); i++)
+        {
+            if (!available.TryGetValue(previous[i].Target, out var queue)) available[previous[i].Target] = queue = new();
+            queue.Enqueue(icons[i]);
+        }
+        var next = new List<IconVisual>();
+        var created = new List<IconVisual>();
+        try
+        {
+            for (int i = 0; i < desired.Count; i++)
+            {
+                if (available.TryGetValue(desired[i].Target, out var queue) && queue.Count > 0) next.Add(queue.Dequeue());
+                else { var icon = CreateIcon(pixels[i]); created.Add(icon); next.Add(icon); }
+            }
+        }
+        catch { foreach (var icon in created) icon.Dispose(); throw; }
+
+        // Keep the existing tree attached while new surfaces are uploaded. Lay
+        // out every new visual before attaching it, and remove obsolete ones last.
+        var old = icons.ToArray();
+        icons.Clear(); icons.AddRange(next);
+        Layout(geometry, width, height, scale);
+        foreach (var icon in created)
+        {
+            row.Children.InsertAtTop(icon.Image);
+            reflectionRow.Children.InsertAtTop(icon.Reflection);
+        }
+        var retained = next.ToHashSet();
+        foreach (var icon in old.Where(icon => !retained.Contains(icon)))
+        {
+            row.Children.Remove(icon.Image); reflectionRow.Children.Remove(icon.Reflection); icon.Dispose();
+        }
+    }
+
+    public void MoveIcon(int from, int to)
+    {
+        var icon = icons[from]; icons.RemoveAt(from); icons.Insert(to, icon);
+    }
+
+    public void RemoveIcon(int index)
+    {
+        var icon = icons[index]; icons.RemoveAt(index);
+        row.Children.Remove(icon.Image); reflectionRow.Children.Remove(icon.Reflection); icon.Dispose();
+    }
+
+    public void Layout(DockGeometry geometry, float width, float height, float dpiScale,
+        IReadOnlyList<int>? order = null, bool animateOrder = false, double dt = 0, int hidden = -1, int insertBefore = -1)
     {
         root.Size = new(width, height);
         row.Size = root.Size;
-        var size = new Vector2((float)geometry.Width * dpiScale, (float)(geometry.IconSize + 22) * dpiScale);
-        var position = new Vector3((width - size.X) / 2, (float)geometry.BodyTop(height / dpiScale) * dpiScale, 0);
-        pill.CornerRadius = tintPill.CornerRadius = new(20 * dpiScale);
-        pill.Size = tintPill.Size = size;
-        glass.Size = tint.Size = size;
-        glass.Offset = tint.Offset = position;
-        rim.Size = size; rim.Offset = position;
-        rimGeometry.Offset = new(.5f * dpiScale);
-        rimGeometry.Size = size - new Vector2(dpiScale);
-        rimGeometry.CornerRadius = new(20 * dpiScale);
-        rimStroke.StrokeThickness = dpiScale;
-        separator.IsVisible = geometry.SeparatorX >= 0;
-        separator.Size = new(dpiScale, size.Y - 24 * dpiScale);
-        separator.Offset = new((float)geometry.SeparatorX * dpiScale, position.Y + 12 * dpiScale, 0);
-        for (int i = 0; i < Math.Min(icons.Count, geometry.Slots.Length); i++)
+        reflectionRow.Size = root.Size;
+        OrderingActive = false;
+        placeholder.IsVisible = hidden >= 0;
+        insertion.IsVisible = insertBefore >= 0;
+        if (insertBefore >= 0)
         {
-            var slot = geometry.Slots[i];
+            int index = Math.Min(insertBefore, geometry.Slots.Length - 1);
+            float x = (float)(geometry.Slots[index].X - 4) * dpiScale;
+            insertion.Size = new(3 * dpiScale, (float)(geometry.IconSize + 5) * dpiScale);
+            insertion.Offset = new(x, (float)(geometry.Baseline(height / dpiScale) - geometry.IconSize - 3) * dpiScale, 0);
+        }
+        for (int positionIndex = 0; positionIndex < Math.Min(icons.Count, geometry.Slots.Length); positionIndex++)
+        {
+            int i = order is null ? positionIndex : order[positionIndex];
+            var slot = geometry.Slots[positionIndex];
             float actualSize = (float)slot.Size * dpiScale;
-            var icon = icons[i];
-            icon.Offset = new((float)slot.X * dpiScale, (float)geometry.Baseline(height / dpiScale) * dpiScale - actualSize, 0);
+            var entry = icons[i];
+            var icon = entry.Image;
+            if (!animateOrder) entry.X.Reset(slot.X);
+            else if (dt > 0) OrderingActive |= entry.X.Step(slot.X, dt, 38);
+            else OrderingActive |= Math.Abs(entry.X.Value - slot.X) > .01;
+            icon.IsVisible = i != hidden;
+            icon.Offset = new((float)entry.X.Value * dpiScale, (float)geometry.Baseline(height / dpiScale) * dpiScale - actualSize, 0);
             icon.Scale = new(actualSize / IconService.Resolution, actualSize / IconService.Resolution, 1);
+            var reflection = entry.Reflection;
+            reflection.IsVisible = icon.IsVisible;
+            reflection.Offset = new(icon.Offset.X, (float)geometry.Baseline(height / dpiScale) * dpiScale + 2 * dpiScale, 0);
+            reflection.Scale = new(icon.Scale.X, icon.Scale.Y * (float)IconReflection.Depth, 1);
+            if (i == hidden)
+            {
+                placeholder.Size = new(actualSize + 4 * dpiScale);
+                placeholder.Offset = new((float)slot.X * dpiScale - 2 * dpiScale, (float)geometry.Baseline(height / dpiScale) * dpiScale - actualSize - 2 * dpiScale, 0);
+                placeholderGeometry.Offset = new(1 * dpiScale);
+                placeholderGeometry.Size = new(actualSize + 2 * dpiScale);
+                placeholderGeometry.CornerRadius = new(10 * dpiScale);
+            }
         }
     }
+
+    internal IDisposable PresentationProbe(float x, float y, float size)
+    {
+        var probe = compositor.CreateSpriteVisual();
+        probe.Brush = compositor.CreateColorBrush(WColor.FromArgb(255, 253, 0, 251));
+        probe.Size = new(size); probe.Offset = new(x, y, 0);
+        root.Children.InsertAtTop(probe);
+        return new ProbeLease(() => { root.Children.Remove(probe); probe.Brush.Dispose(); probe.Dispose(); });
+    }
+    private sealed class ProbeLease(Action dispose) : IDisposable { public void Dispose() => dispose(); }
 
     public void Dispose()
     {

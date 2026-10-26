@@ -16,9 +16,9 @@ public static class DockFootprint
 {
     public static RoundedBounds[] Create(DockGeometry geometry, double width, double height)
     {
-        // Includes the small visible shadow, never the full transparent hosting strip.
+        // Only the icon row and its reflections; never the transparent hosting strip.
         double top = geometry.BodyTop(height);
-        var result = new List<RoundedBounds> { new(geometry.BodyLeft(width) - 5, top - 5, geometry.Width + 10, geometry.IconSize + 32, 24) };
+        var result = new List<RoundedBounds> { new(geometry.BodyLeft(width) - 3, top - 2, geometry.Width + 6, height - DockGeometry.Foot - top + 2, 12) };
         foreach (var slot in geometry.Slots)
         {
             double y = geometry.Baseline(height) - slot.Size;

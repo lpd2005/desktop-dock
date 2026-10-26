@@ -31,6 +31,7 @@ internal static class TaskbarChecks
                 var released = TaskbarNative.Capture()!;
                 Require(released.Frame == before.Frame, "NativeTaskbarNotMoved");
                 Require(!before.CanReleaseTop || released.Work == before.ExpandedWork, "TopWorkAreaReleased");
+                Require(enhancement.MotionFrames > 0 && !enhancement.MotionActive, "TransitionRendersAndReachesRest");
                 foreach (string mode in new[] { "maximized", "fullscreen" })
                 {
                     string stableData = Path.Combine(data, "stable-" + mode);
@@ -96,7 +97,7 @@ internal static class TaskbarChecks
                     finally { RegressionProbe.Close(probe); }
                 }
                 enhancement.InputForChecks = () => (true, false, false, false);
-                enhancement.TickForChecks(); await Task.Delay(300); enhancement.TickForChecks();
+                enhancement.TickForChecks(); await Task.Delay(550); enhancement.TickForChecks();
                 Require(TaskbarNative.IsPresented((nint)before.Handle), "EdgeDwellRevealedActualTaskbar");
                 enhancement.InputForChecks = () => (false, false, true, false);
                 await Task.Delay(1000); enhancement.TickForChecks();
@@ -106,9 +107,15 @@ internal static class TaskbarChecks
                 Require(!TaskbarNative.IsPresented((nint)before.Handle), "TaskSwitchDoesNotRevealTaskbar");
                 enhancement.InputForChecks = () => (false, false, false, false);
                 enhancement.Reveal(); enhancement.TickForChecks();
+                await Task.Delay(280); enhancement.TickForChecks();
                 Require(TaskbarNative.IsPresented((nint)before.Handle), "ManualRecallWorks");
                 await Task.Delay(3200); enhancement.TickForChecks();
+                for (int i = 0; i < 20 && enhancement.MotionActive; i++) await Task.Delay(25);
                 Require(!TaskbarNative.IsPresented((nint)before.Handle), "ManualRecallTimeout");
+                int settledFrames = enhancement.MotionFrames;
+                await Task.Delay(150);
+                Require(!enhancement.MotionActive && enhancement.MotionFrames == settledFrames, "TransitionClockStopsWhenIdle");
+                var motionInfo = new { enhancement.MotionFrames, enhancement.SlideUsed };
                 Require(enhancement.GlassRunning, "OwnedGlassProcessRunning");
                 uint glassPid = 0;
                 nint glassWindow = Native.FindWindow("TrayWindow", "TranslucentTB");
@@ -150,7 +157,7 @@ internal static class TaskbarChecks
                 }
                 File.WriteAllText(Path.Combine(data, "taskbar-checks.json"), JsonSerializer.Serialize(new
                 {
-                    Version = "0.1.0-preview.5", Checks = checks, IdleCpuPercent = idleCpu, Workers = workers,
+                    Version = "0.1.0-preview.6", Checks = checks, Motion = motionInfo, IdleCpuPercent = idleCpu, Workers = workers,
                     WorkingSetMiB = ownProcess.WorkingSet64 / 1048576d,
                     Notes = "Actual primary top taskbar; controlled edge/menu state inputs, no synthetic mouse or key input. Glass process initialization is not pixel-level visual verification."
                 }, new JsonSerializerOptions { WriteIndented = true }));

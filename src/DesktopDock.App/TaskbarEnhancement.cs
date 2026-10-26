@@ -14,6 +14,7 @@ internal sealed class TaskbarEnhancement : IDisposable
     private TaskbarRecoveryState? state;
     private EventWaitHandle? guardStop;
     private Process? guard;
+    private TaskbarMotion? motion;
     private bool autoHide, disposed;
     private double lastValidation;
     public string Status { get; private set; } = "任务栏增强未启用";
@@ -24,6 +25,9 @@ internal sealed class TaskbarEnhancement : IDisposable
     internal bool GuardRunning => guard is { HasExited: false };
     internal TaskbarSnapshot? Snapshot => state?.Snapshot;
     internal int GuardProcessId => guard is { HasExited: false } ? guard.Id : 0;
+    internal bool MotionActive => motion?.Active == true;
+    internal int MotionFrames => motion?.Frames ?? 0;
+    internal bool SlideUsed => motion?.SlideUsed == true;
     internal Func<(bool Edge, bool Over, bool Shell, bool Switching)>? InputForChecks { get; set; }
 
     public TaskbarEnhancement(string data)
@@ -67,10 +71,19 @@ internal sealed class TaskbarEnhancement : IDisposable
         }
         if (!autoHide && state.Transparency is not null)
         {
+            motion?.Dispose(); motion = null;
             if (!TaskbarNative.RestoreTransparency((nint)state.Snapshot.Handle, state.Transparency))
             { Stop(); Status = "任务栏外观无法恢复，已停止增强"; Changed(); return; }
             state = state with { Transparency = null };
             TaskbarRecovery.Save(data, state);
+        }
+        if (autoHide && motion is null)
+            motion = new(state.Snapshot, state.Transparency!, () => { Stop(); Status = "任务栏过渡不可用，已恢复"; Changed(); });
+        if (motion is not null)
+        {
+            motion.Enabled = !settings.ReducedMotion;
+            motion.Invalidate();
+            if (settings.ReducedMotion && motion.Active) motion.Request(motion.Target, true);
         }
         bool release = autoHide && state.Snapshot.CanReleaseTop;
         if (release != state.WorkChanged)
@@ -121,23 +134,27 @@ internal sealed class TaskbarEnhancement : IDisposable
         bool edge = point.X >= snapshot.Monitor.Left && point.X < snapshot.Monitor.Right && point.Y >= snapshot.Monitor.Top && point.Y <= snapshot.Monitor.Top + 2;
         bool over = TaskbarNative.Contains(snapshot.Frame, point);
         bool shell = TaskbarNative.ShellInteraction(snapshot) || (over && TaskbarNative.Down(1));
+        if (motion?.Active == true && over && point.Y < snapshot.Frame.Top + (snapshot.Frame.Bottom - snapshot.Frame.Top) * motion.Progress)
+            shell = true;
         bool switching = TaskbarNative.Down(0x12) && (TaskbarNative.Down(9) || !TaskbarNative.Down(0x11));
         if (InputForChecks is not null) (edge, over, shell, switching) = InputForChecks();
         bool show = visibility.Update(now, edge, over, shell, switching);
-        if (show != TaskbarNative.IsPresented((nint)snapshot.Handle))
+        bool externallyChanged = motion is not null && show == motion.Target && !motion.Active && show != TaskbarNative.IsPresented((nint)snapshot.Handle);
+        if (motion is not null && (show != motion.Target || switching && motion.Active || externallyChanged))
         {
-            if (!TaskbarNative.Present((nint)snapshot.Handle, show, state.Transparency!))
+            if (!motion.Request(show, switching || externallyChanged))
             { Stop(); Status = "任务栏呈现状态无法改变，已恢复"; Changed(); }
         }
     }
     public void Reveal()
     {
         visibility.Reveal(clock.Elapsed.TotalSeconds);
-        if (state?.Transparency is not null) TaskbarNative.Present((nint)state.Snapshot.Handle, true, state.Transparency);
+        if (motion is not null) motion.Request(true);
     }
     public void Stop()
     {
         timer.Stop();
+        motion?.Dispose(); motion = null;
         glass.Dispose();
         bool restored = TaskbarRecovery.Restore(data);
         guardStop?.Set(); guardStop?.Dispose(); guardStop = null;
