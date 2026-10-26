@@ -27,14 +27,14 @@ internal sealed class LaunchCoordinator : IDisposable
         timer.Tick += (_, _) => Poll();
     }
 
-    public void Launch(DockItem item, bool toggle = true)
+    public void Launch(DockItem item, bool toggle = true, nint? foregroundAtPress = null)
     {
         timer.Stop();
         string key = item.Target + "\n" + item.Arguments;
         if (targets.Count > 100) { targets.Clear(); bound.Clear(); }
         if (!targets.TryGetValue(key, out var info)) targets[key] = info = ApplicationTarget.Resolve(item.Target, item.Arguments);
         var windows = Windows();
-        nint foreground = Native.GetAncestor(Native.GetForegroundWindow(), 3);
+        nint foreground = foregroundAtPress ?? Native.GetAncestor(Native.GetForegroundWindow(), 3);
         nint cached = 0;
         if (bound.TryGetValue(key, out var old) && windows.Contains(old.Handle))
         {

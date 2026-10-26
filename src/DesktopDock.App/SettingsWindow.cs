@@ -27,7 +27,7 @@ internal sealed class SettingsWindow : Window
         var content = new StackPanel { Margin = new Thickness(30, 25, 30, 25) };
         var surface = new ScrollViewer { Content = content, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
         Content = surface;
-        content.Children.Add(new TextBlock { Text = "DESKTOP DOCK  /  0.1 preview.7", FontSize = 11, Foreground = Brushes.LightSteelBlue });
+        content.Children.Add(new TextBlock { Text = "DESKTOP DOCK  /  0.1 preview.8", FontSize = 11, Foreground = Brushes.LightSteelBlue });
         content.Children.Add(new TextBlock { Text = "让桌面，轻一点。", FontSize = 29, FontWeight = FontWeights.SemiBold, Margin = new(0, 10, 0, 8) });
         content.Children.Add(new TextBlock { Text = "透明悬浮 · 轻盈倒影 · 圆润图标", Foreground = Brushes.LightSlateGray, Margin = new(0, 0, 0, 20) });
         content.Children.Add(new TextBlock { Text = "鼠标在主屏底边停留约 0.2 秒唤出 Dock。\n停留在图标或菜单上保持显示，移开约 0.75 秒收起。", FontSize = 11, Foreground = Brushes.LightSteelBlue, Margin = new(0, 0, 0, 16) });

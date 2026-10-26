@@ -1,6 +1,6 @@
 # Dock 交互与当前实现
 
-当前以 0.1.0-preview.7 为准。preview.2 的启动动效和窗口位置调整已按用户要求移除。
+当前以 0.1.0-preview.8 为准。preview.2 的启动动效和窗口位置调整已按用户要求移除。
 
 ## 显示、遮挡与召回
 
@@ -14,7 +14,9 @@
 
 取消全局召回快捷键。鼠标在主屏物理底边两像素内停留约 180 ms 后唤出；停在底边、图标区域或菜单中保持显示，离开约 750 ms 后收起。没有应用遮挡且关闭普通自动隐藏时保持常显。底边检测只读鼠标位置，隐藏时不留输入窗口或透明触发条。切换应用时清除本次唤出并重新等待底边停留，避免闪现；窗口遮挡消失后仍等待约 250 ms 稳定状态。
 
-绘制窗口由独立原生 HWND 承载，固定尺寸与位置，不设置动态窗口区域。它使用分层透明输入穿透样式；动态区域仅应用到不承载图像的输入 HWND，避免 SetWindowRgn 触发绘制宿主的窗口位置 / 裁剪更新。先前仅检查隐藏状态会漏掉这种画面重置，现增加实际呈现像素检查。依据：[SetWindowRgn](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setwindowrgn)、[分层窗口命中](https://learn.microsoft.com/en-us/windows/win32/winmsg/window-features#layered-windows)。
+绘制窗口由独立原生 HWND 承载，图标布局更新时保持尺寸与位置，不设置动态窗口区域。它使用分层透明输入穿透样式；动态区域仅应用到不承载图像的输入 HWND，避免 SetWindowRgn 触发绘制宿主的窗口位置 / 裁剪更新。先前仅检查隐藏状态会漏掉这种画面重置，现增加实际呈现像素检查。依据：[SetWindowRgn](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setwindowrgn)、[分层窗口命中](https://learn.microsoft.com/en-us/windows/win32/winmsg/window-features#layered-windows)。
+
+收放阶段整体移动自身窗口约 28 DIP 并改变透明度：显示约 220 ms 上滑淡入，隐藏约 180 ms 下滑淡出。反向请求从当前位置继续，动画结束后停止高频更新。隐藏开始便释放鼠标输入，显示就位后恢复输入窗口；透明空白区域不阻挡其他应用。切换任务时直接收起以避免切换器闪现，“减少动画”同样采用即时切换。不截图外部应用，也不移动外部应用窗口。
 
 右键菜单使用由输入窗口持有的原生菜单。菜单的完整交互生命周期计入显示保护，不受覆盖和离开延迟关闭；选择、取消或切换应用后退出。参见 [TrackPopupMenuEx](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-trackpopupmenuex)。
 
@@ -27,6 +29,8 @@
 - 目标窗口已最小化：恢复。
 - 目标窗口在后台：激活。
 - 右键菜单的打开操作只打开 / 激活，不最小化。
+
+活动窗口取鼠标按下时的根窗口快照，松开时使用同一快照作点击判断。点击过程中出现焦点变化时，仍按最初点击的活动状态决定最小化；取消的按下会清除快照。Dock 设置图标使用相同语义。
 
 EXE、快捷方式目标、应用 URI、应用标识和本次启动窗口用于关联图标。链接只读取目标信息，不修改原快捷方式；窗口关联只保存在当前进程内。文件夹、URL 和带参数的入口优先使用本次启动后关联的窗口，避免泛化到无关窗口。
 

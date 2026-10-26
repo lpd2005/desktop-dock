@@ -14,11 +14,12 @@ internal sealed class DockWindow : IDisposable
 {
     private readonly HwndSource source;
     private readonly DockPresentationWindow visualSource;
+    private readonly DockMotion motion;
     private readonly CompositionRenderer renderer;
     private readonly WindowRegion region;
     private readonly DockSettings settings;
     private readonly Action openSettings, changed, recover, quit;
-    private readonly Action toggleSettings;
+    private readonly Action<nint?> toggleSettings;
     private readonly LaunchCoordinator launcher;
     private readonly WindowOcclusion occlusion;
     private readonly DockDropTarget dropTarget;
@@ -54,9 +55,11 @@ internal sealed class DockWindow : IDisposable
     private int hideTransitions;
     private bool? pointerOverForChecks;
     private bool? bottomEdgeForChecks;
+    private bool? visibilityForChecks;
     private double dropVisibleUntil = double.NegativeInfinity;
     internal int IconLoadDelayForChecks { get; set; }
     private Native.Point pressedPoint;
+    private nint? pressedForeground;
     private bool dragging, returning, sortingSettles, externalDrop, suppressHover, systemDragging;
     private bool checkingInteraction;
     private Action? dragStartInterruptionForChecks;
@@ -80,11 +83,11 @@ internal sealed class DockWindow : IDisposable
     internal AppClickAction LastAppAction => launcher.LastAction;
     internal nint LastAppWindow => launcher.LastWindow;
 
-    public DockWindow(DockSettings settings, Action openSettings, Action changed, Action recover, Action quit, Action? toggleSettings = null)
+    public DockWindow(DockSettings settings, Action openSettings, Action changed, Action recover, Action quit, Action<nint?>? toggleSettings = null)
     {
         this.settings = settings; this.openSettings = openSettings; this.changed = changed;
         this.recover = recover; this.quit = quit;
-        this.toggleSettings = toggleSettings ?? openSettings;
+        this.toggleSettings = toggleSettings ?? (_ => openSettings());
         launcher = new();
         source = new HwndSource(new HwndSourceParameters("Desktop Dock")
         {
@@ -100,6 +103,7 @@ internal sealed class DockWindow : IDisposable
         region.Update([], 1); // Never expose an unshaped screen-wide input window, including during startup.
         visualSource = new();
         renderer = new(visualSource.Handle);
+        motion = new(Handle, visualSource.Handle, source.Dispatcher);
         renderer.SetTheme(settings);
         animationClock = new(source.Dispatcher, () => RenderFrame(null, EventArgs.Empty));
         label = new ToolTip { Placement = PlacementMode.AbsolutePoint, StaysOpen = true,
@@ -195,8 +199,7 @@ internal sealed class DockWindow : IDisposable
         autoHidden = false;
         occlusionDirty = true;
         hover.Reset(0);
-        Native.SetWindowPos(Handle, new(-1), left, top, width, height, 0x0010);
-        Native.SetWindowPos(visualSource.Handle, new(-1), left, top, width, height, 0x0010);
+        motion.SetBounds(left, top, width, height, scale);
         RenderLayout();
         CheckVisibility();
     }
@@ -273,11 +276,12 @@ internal sealed class DockWindow : IDisposable
             {
                 interactionVersion++;
                 pressedIndex = -1;
+                pressedForeground = null;
                 EndIconDrag(CanDropSort(dragX, dragY), DockReorder.RemoveOnRelease(RestGeometry, width / scale, height / scale, dragX, dragY));
                 Native.ReleaseCapture();
             }
         }
-        else if (!down && !IsPointerOverDock()) { interactionVersion++; pressedIndex = -1; Native.ReleaseCapture(); }
+        else if (!down && !IsPointerOverDock()) { interactionVersion++; pressedIndex = -1; pressedForeground = null; Native.ReleaseCapture(); }
     }
 
     private nint Message(nint hwnd, int msg, nint wparam, nint lparam, ref bool handled)
@@ -334,6 +338,7 @@ internal sealed class DockWindow : IDisposable
             case 0x0201:
                 NoteInteraction();
                 interactionVersion++;
+                pressedForeground = Native.GetAncestor(Native.GetForegroundWindow(), 3);
                 if (returning) FinishGhost();
                 label.IsOpen = false; labelTimer.Stop();
                 pressedIndex = HitIndex(x, y); pressedPoint = new() { X = x, Y = y };
@@ -350,6 +355,8 @@ internal sealed class DockWindow : IDisposable
                 NoteInteraction();
                 interactionVersion++;
                 int pressed = pressedIndex;
+                nint? clickForeground = pressedForeground;
+                pressedForeground = null;
                 bool wasDragging = dragging;
                 pressedIndex = -1;
                 if (wasDragging) EndIconDrag(CanDropSort(x / scale, y / scale),
@@ -357,7 +364,7 @@ internal sealed class DockWindow : IDisposable
                 Native.ReleaseCapture();
                 bool moved = DockReorder.Moved((x - pressedPoint.X) / scale, (y - pressedPoint.Y) / scale);
                 suppressHover = true;
-                if (!wasDragging && pressed >= 0 && pressed < entries.Count && !moved) Launch(entries[pressed]);
+                if (!wasDragging && pressed >= 0 && pressed < entries.Count && !moved) Launch(entries[pressed], foregroundAtPress: clickForeground);
                 StartRendering();
                 break;
             case 0x0215:
@@ -386,13 +393,13 @@ internal sealed class DockWindow : IDisposable
         label.IsOpen = true;
     }
 
-    private void Launch(DockItem item, bool toggle = true)
+    private void Launch(DockItem item, bool toggle = true, nint? foregroundAtPress = null)
     {
         NoteInteraction();
-        if (item.Target == "dock:settings") { if (toggle) toggleSettings(); else openSettings(); return; }
+        if (item.Target == "dock:settings") { if (toggle) toggleSettings(foregroundAtPress); else openSettings(); return; }
         try
         {
-            launcher.Launch(item, toggle);
+            launcher.Launch(item, toggle, foregroundAtPress);
         }
         catch (Exception e) when (e is System.ComponentModel.Win32Exception or InvalidOperationException)
         { System.Windows.MessageBox.Show("无法打开这个入口，请检查目标是否仍然存在。", "Desktop Dock"); }
@@ -465,29 +472,27 @@ internal sealed class DockWindow : IDisposable
         Native.GetCursorPos(out var cursor);
         bool atEdge = bottomEdgeForChecks ?? (cursor.X >= screen.Left && cursor.X < screen.Right && cursor.Y >= screen.Bottom - 2 && cursor.Y < screen.Bottom);
         bool interacting = pressedIndex >= 0 || dragging || returning || externalDrop || shellDragging || finishingDrop || menuOpen;
+        bool overPresented = motion.Progress > 0 && IsPointerOverDock();
+        if (motion.Active && !motion.Target && overPresented && !switching) visibility.Summon(now);
         bool show = visibility.ShouldShow(cachedOccluded, switching, now, settings.AutoHide, atEdge,
-            !blocked && !autoHidden && IsPointerOverDock(), interacting) && entries.Count > 0;
-        bool wasShown = Native.IsWindowVisible(Handle) || Native.IsWindowVisible(visualSource.Handle);
+            overPresented, interacting) && entries.Count > 0;
+        show = (visibilityForChecks ?? show) && !switching && entries.Count > 0;
+        bool wasTarget = motion.Target;
         if (!show)
         {
             blocked = cachedOccluded || !settings.AutoHide;
             autoHidden = !blocked;
-            if (wasShown)
+            if (wasTarget)
             {
                 StopRendering(); hover.Reset(0); label.IsOpen = false;
                 hideTransitions++;
-                Native.ShowWindow(Handle, 0);
-                Native.ShowWindow(visualSource.Handle, 0);
             }
+            motion.Request(false, switching || settings.ReducedMotion);
             return;
         }
         blocked = autoHidden = false;
-        if (!Native.IsWindowVisible(Handle) || !Native.IsWindowVisible(visualSource.Handle))
-        {
-            RenderLayout();
-            Native.ShowWindow(visualSource.Handle, 8);
-            Native.ShowWindow(Handle, 8);
-        }
+        if (!wasTarget) RenderLayout();
+        motion.Request(true, settings.ReducedMotion);
     }
 
     public void Summon()
@@ -615,6 +620,7 @@ internal sealed class DockWindow : IDisposable
     {
         interactionVersion++;
         pressedIndex = -1;
+        pressedForeground = null;
         if (dragging) EndIconDrag(false);
         FinishGhost(); dragging = false; sortingSettles = false;
         if (Native.GetCapture() == Handle) Native.ReleaseCapture();
@@ -665,6 +671,79 @@ internal sealed class DockWindow : IDisposable
 
     internal void InvokeSettingsEntry() => Launch(new("Dock 设置", "dock:settings"));
     internal void LaunchForCheck(DockItem item) => Launch(item);
+    internal async Task PinForCheck(DockItem item)
+    {
+        if (!settings.Items.Contains(item)) { settings.Items.Add(item); await LoadIcons(); }
+    }
+    internal void ClickForCheck(DockItem item, Action? betweenPressAndRelease = null)
+    {
+        int index = entries.IndexOf(item);
+        if (index < 0) throw new InvalidOperationException("Missing test entry.");
+        var slot = geometry.Slots[index];
+        int x = (int)Math.Round((slot.X + slot.Size / 2) * scale);
+        int y = (int)Math.Round((geometry.Baseline(height / scale) - slot.Size / 2) * scale);
+        nint point = new((y & 0xffff) << 16 | x & 0xffff);
+        bool previous = checkingInteraction; checkingInteraction = true;
+        try
+        {
+            Native.SendMessage(Handle, 0x0201, 1, point);
+            betweenPressAndRelease?.Invoke();
+            Native.SendMessage(Handle, 0x0202, 0, point);
+        }
+        finally { checkingInteraction = previous; }
+    }
+    internal async Task WaitUntilShownForChecks()
+    {
+        for (int i = 0; i < 100; i++)
+        {
+            CheckVisibility();
+            if (IsDockVisible && !motion.Active) return;
+            await Task.Delay(20);
+        }
+        throw new TimeoutException("Dock did not finish revealing.");
+    }
+
+    internal async Task<Dictionary<string, bool>> CheckVisibilityMotion()
+    {
+        var checks = new Dictionary<string, bool>();
+        void Require(bool value, string name) { checks[name] = value; if (!value) throw new InvalidOperationException(name); }
+        bool reduced = settings.ReducedMotion;
+        try
+        {
+            settings.ReducedMotion = false;
+            await WaitUntilShownForChecks();
+            visibilityForChecks = false; CheckVisibility();
+            Require(motion.Active && !Native.IsWindowVisible(Handle) && Native.IsWindowVisible(visualSource.Handle), "HideKeepsPictureAndReleasesInput");
+            await Task.Delay(60);
+            Native.GetWindowRect(visualSource.Handle, out var partial);
+            Native.GetLayeredWindowAttributes(visualSource.Handle, out _, out byte alpha, out _);
+            Require(motion.Progress > 0 && motion.Progress < 1 && alpha > 0 && alpha < 255 && partial.Top > top,
+                "HideHasIntermediateAlphaAndPosition");
+            visibilityForChecks = true; CheckVisibility();
+            Require(motion.Active && motion.Progress > 0 && motion.Progress < 1, "ReverseDoesNotSnapToVisible");
+            await WaitUntilShownForChecks();
+            Native.GetWindowRect(visualSource.Handle, out var shown);
+            Require(motion.Progress == 1 && shown.Top == top && Native.IsWindowVisible(Handle), "RevealSettlesBeforeAcceptingInput");
+            int frames = motion.Frames; await Task.Delay(140);
+            Require(motion.Frames == frames && !motion.Active, "VisibilityClockStopsAtRest");
+            visibilityForChecks = false; CheckVisibility(); await Task.Delay(280);
+            Require(motion.Progress == 0 && !motion.Active && !Native.IsWindowVisible(Handle)
+                && !Native.IsWindowVisible(visualSource.Handle), "HideFinishesWithBothWindowsHidden");
+            visibilityForChecks = true; CheckVisibility(); await Task.Delay(60);
+            Require(motion.Active && motion.Progress > 0 && motion.Progress < 1 && !Native.IsWindowVisible(Handle),
+                "RevealHasIntermediateFramesWithoutInvisibleInput");
+            visibilityForChecks = false; CheckVisibility(); await Task.Delay(280);
+            Require(motion.Progress == 0 && !motion.Active, "ReverseRevealSettlesHidden");
+            settings.ReducedMotion = true;
+            visibilityForChecks = true; CheckVisibility();
+            Require(motion.Progress == 1 && !motion.Active && IsDockVisible, "ReducedMotionShowsImmediately");
+            visibilityForChecks = false; CheckVisibility();
+            Require(motion.Progress == 0 && !motion.Active, "ReducedMotionHidesImmediately");
+        }
+        finally { settings.ReducedMotion = reduced; visibilityForChecks = null; CheckVisibility(); }
+        await WaitUntilShownForChecks();
+        return checks;
+    }
     internal void UseOcclusionWindowsForChecks(Func<IEnumerable<nint>> source) { occlusion.WindowsForChecks = source; RefreshOcclusion(); }
     internal void SetSwitchingForChecks(bool? value) { switchingForChecks = value; CheckVisibility(); }
     internal void InteractForChecks() => NoteInteraction();
@@ -756,9 +835,11 @@ internal sealed class DockWindow : IDisposable
             Native.SendMessage(Handle, 0x001F, 0, 0);
             bool autoHideBefore = settings.AutoHide;
             settings.AutoHide = true; CheckVisibility();
+            for (int i = 0; i < 60 && !autoHidden; i++) { await Task.Delay(25); CheckVisibility(); }
             Require(autoHidden, "AutoHideInitiallyRetractsDock");
             SetShellDragForChecks(new(true, true, false, new() { X = 100, Y = 100 }));
             SetShellDragForChecks(new(true, false, true, new() { X = 130, Y = 130 }));
+            await WaitUntilShownForChecks();
             Require(shellDrag.Active && IsDockVisible && !autoHidden, "DesktopDragWithoutWinEventRevealsDock");
             await Task.Delay(650); CheckVisibility();
             Require(IsDockVisible && !autoHidden, "DragKeepsDockAvailableBeforeOleEnter");
@@ -766,7 +847,7 @@ internal sealed class DockWindow : IDisposable
             Require(!IsDockVisible && !shellDrag.Active, "AltTabStillSuppressesDraggingDock");
             SetShellDragForChecks(new(false, false, false, new()));
             settings.AutoHide = autoHideBefore; SetSwitchingForChecks(false);
-            await Task.Delay(350); CheckVisibility(); SetSwitchingForChecks(null);
+            await WaitUntilShownForChecks(); SetSwitchingForChecks(null);
             PreviewWave(.1); await Task.Delay(180);
             var first = geometry.Slots[0];
             Mouse(0x0201, first.X + first.Size / 2, geometry.Baseline(height / scale) - first.Size / 2);
@@ -833,6 +914,7 @@ internal sealed class DockWindow : IDisposable
                 await LoadIcons();
                 SetSwitchingForChecks(false);
                 SetShellDragForChecks(new(false, false, false, new()));
+                await WaitUntilShownForChecks();
                 var oldEntries = entries.ToArray();
                 var oldVisuals = renderer.IconIdentities;
                 point = new() { X = left + (int)(RestGeometry.Slots[1].X * scale),
@@ -894,7 +976,7 @@ internal sealed class DockWindow : IDisposable
                 await Task.Delay(1000); CheckVisibility();
                 Require(autoHidden && pendingDropGeneration == 0, "AutoHideResumesAfterDrop" + initialCount);
             }
-            settings.AutoHide = false; CheckVisibility();
+            settings.AutoHide = false; await WaitUntilShownForChecks();
             var fullVisuals = renderer.IconIdentities;
             Require(settings.Items.Count == 40 && dropTarget.DropFilesForChecks([folder], point) == 0
                 && renderer.IconIdentities.Zip(fullVisuals).All(pair => ReferenceEquals(pair.First, pair.Second)) && IsDockVisible,
@@ -941,7 +1023,7 @@ internal sealed class DockWindow : IDisposable
         CancelInteraction(); disposed = true; StopRendering(); visibilityTimer.Stop(); labelTimer.Stop(); label.IsOpen = false;
         foreach (nint hook in hooks) if (hook != 0) Native.UnhookWinEvent(hook);
         if (menuOpen) Native.EndMenu();
-        dropTarget.Dispose(); launcher.Dispose(); animationClock.Dispose(); renderer.Dispose(); visualSource.Dispose(); source.Dispose();
+        dropTarget.Dispose(); launcher.Dispose(); animationClock.Dispose(); motion.Dispose(); renderer.Dispose(); visualSource.Dispose(); source.Dispose();
     }
 }
 
