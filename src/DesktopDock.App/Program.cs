@@ -350,7 +350,7 @@ internal sealed class Controller : IDisposable
             await Task.Delay(5000); process.Refresh();
             var report = new
             {
-                Version = "0.1.0-preview.4", dock.HardwareRendering, dock.HostBackdrop, dock.IconCount,
+                Version = "0.1.0-preview.5", dock.HardwareRendering, dock.HostBackdrop, dock.IconCount,
                 dock.RecallShortcut, dock.HotkeyRegistered, RecallTimedOut = recallTimedOut, InteractionResetTimeout = interactionResetTimeout,
                 DockExcludedFromAltTab = dock.ExcludedFromAltTab, SettingsExcludedFromAltTab = settingsExcluded, NoTaskSwitchFlash = noImmediateFlash,
                 SettingsOpened = settingsOpened, SettingsMinimized = settingsMinimized, SettingsRestored = settingsRestored,

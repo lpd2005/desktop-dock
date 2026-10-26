@@ -4,7 +4,8 @@ using System.Text.Json;
 
 namespace DesktopDock.App;
 
-internal sealed record TaskbarRecoveryState(TaskbarSnapshot Snapshot, bool WorkChanged, uint GlassProcess = 0, long GlassStart = 0);
+internal sealed record TaskbarRecoveryState(TaskbarSnapshot Snapshot, bool WorkChanged, uint GlassProcess = 0, long GlassStart = 0,
+    TaskbarTransparency? Transparency = null);
 
 internal static class TaskbarRecovery
 {
@@ -30,7 +31,12 @@ internal static class TaskbarRecovery
             GlassCompanion.StopInDirectory(data); // Also covers parent death immediately after Process.Start, before PID journaling.
             var current = TaskbarNative.Capture();
             if (current is null) return false; // Explorer not ready: keep the recovery record.
-            if (TaskbarNative.Matches(saved)) Native.ShowWindow((nint)saved.Handle, saved.WasVisible ? 8 : 0);
+            if (TaskbarNative.Matches(saved))
+            {
+                if (state.Transparency is not null && !TaskbarNative.RestoreTransparency((nint)saved.Handle, state.Transparency)) return false;
+                // Legacy preview.4 journals used ShowWindow; new sessions retain WS_VISIBLE throughout.
+                if (Native.IsWindowVisible((nint)saved.Handle) != saved.WasVisible) Native.ShowWindow((nint)saved.Handle, saved.WasVisible ? 8 : 0);
+            }
             if (state.WorkChanged && current.Monitor == saved.Monitor && current.Work == saved.ExpandedWork)
             {
                 if (!TaskbarNative.SetWork(saved.Work)) return false;

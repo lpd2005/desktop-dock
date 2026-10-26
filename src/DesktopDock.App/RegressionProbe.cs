@@ -20,6 +20,7 @@ internal static class RegressionProbe
         var screen = Forms.Screen.PrimaryScreen!;
         var window = new Window { Title = "Desktop Dock · 回归检查", Background = new SolidColorBrush(Color.FromRgb(230, 235, 244)),
             WindowStartupLocation = WindowStartupLocation.Manual, Width = 1000, Height = 700, ShowInTaskbar = true };
+        int resizeEvents = 0;
         // Cooperative test processes explicitly permit their parent to regain foreground.
         window.Activated += (_, _) => { if (allowForegroundProcess != 0) Native.AllowSetForegroundWindow(allowForegroundProcess); };
         void ApplyMode(string current)
@@ -41,7 +42,24 @@ internal static class RegressionProbe
             }
             if (window.IsVisible) window.Activate();
         }
-        window.SourceInitialized += (_, _) => ApplyMode(mode);
+        window.SourceInitialized += (_, _) =>
+        {
+            var source = HwndSource.FromHwnd(new WindowInteropHelper(window).Handle);
+            source.AddHook((nint hwnd, int message, nint wparam, nint lparam, ref bool handled) =>
+            {
+                if (message == 0x0005)
+                {
+                    resizeEvents++;
+                    WriteShared(Path.Combine(data, "window-metrics.json"), JsonSerializer.Serialize(new
+                    {
+                        ResizeEvents = resizeEvents, ClientWidth = (int)(lparam.ToInt64() & 0xffff),
+                        ClientHeight = (int)((lparam.ToInt64() >> 16) & 0xffff)
+                    }));
+                }
+                return 0;
+            });
+            ApplyMode(mode);
+        };
         var grid = new Grid { Margin = new(24) };
         var caption = new TextBlock { Text = mode == "normal" ? "Dock 交互回归检查" : mode == "maximized" ? "最大化避让检查" : "全屏避让检查",
             FontSize = 30, Foreground = new SolidColorBrush(Color.FromRgb(37, 51, 75)), VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Center };

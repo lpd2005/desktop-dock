@@ -57,6 +57,21 @@ internal sealed class TaskbarEnhancement : IDisposable
             { Stop(); Status = "恢复保护无法启动，任务栏保持原状"; Changed(); return; }
         }
         autoHide = settings.TaskbarAutoHide && !state.Snapshot.NativeAutoHide;
+        if (autoHide && state.Transparency is null)
+        {
+            var transparency = TaskbarNative.CaptureTransparency((nint)state.Snapshot.Handle);
+            if (transparency is null || transparency.Alpha == 0)
+            { Stop(); Status = "任务栏外观由其他程序管理，无法启用隐藏"; Changed(); return; }
+            state = state with { Transparency = transparency };
+            TaskbarRecovery.Save(data, state);
+        }
+        if (!autoHide && state.Transparency is not null)
+        {
+            if (!TaskbarNative.RestoreTransparency((nint)state.Snapshot.Handle, state.Transparency))
+            { Stop(); Status = "任务栏外观无法恢复，已停止增强"; Changed(); return; }
+            state = state with { Transparency = null };
+            TaskbarRecovery.Save(data, state);
+        }
         bool release = autoHide && state.Snapshot.CanReleaseTop;
         if (release != state.WorkChanged)
         {
@@ -100,7 +115,7 @@ internal sealed class TaskbarEnhancement : IDisposable
             }
             glass.RefreshStatus(); Changed();
         }
-        if (!autoHide) { if (!Native.IsWindowVisible((nint)state.Snapshot.Handle)) Native.ShowWindow((nint)state.Snapshot.Handle, 8); return; }
+        if (!autoHide) return;
         if (!Native.GetCursorPos(out var point)) return;
         var snapshot = state.Snapshot;
         bool edge = point.X >= snapshot.Monitor.Left && point.X < snapshot.Monitor.Right && point.Y >= snapshot.Monitor.Top && point.Y <= snapshot.Monitor.Top + 2;
@@ -109,16 +124,16 @@ internal sealed class TaskbarEnhancement : IDisposable
         bool switching = TaskbarNative.Down(0x12) && (TaskbarNative.Down(9) || !TaskbarNative.Down(0x11));
         if (InputForChecks is not null) (edge, over, shell, switching) = InputForChecks();
         bool show = visibility.Update(now, edge, over, shell, switching);
-        if (show != Native.IsWindowVisible((nint)snapshot.Handle))
+        if (show != TaskbarNative.IsPresented((nint)snapshot.Handle))
         {
-            Native.ShowWindow((nint)snapshot.Handle, show ? 8 : 0);
-            if (state.WorkChanged && TaskbarNative.Capture()?.Work == snapshot.Work) TaskbarNative.SetWork(snapshot.ExpandedWork);
+            if (!TaskbarNative.Present((nint)snapshot.Handle, show, state.Transparency!))
+            { Stop(); Status = "任务栏呈现状态无法改变，已恢复"; Changed(); }
         }
     }
     public void Reveal()
     {
         visibility.Reveal(clock.Elapsed.TotalSeconds);
-        if (state is not null) Native.ShowWindow((nint)state.Snapshot.Handle, 8);
+        if (state?.Transparency is not null) TaskbarNative.Present((nint)state.Snapshot.Handle, true, state.Transparency);
     }
     public void Stop()
     {
