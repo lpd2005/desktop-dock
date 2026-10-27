@@ -65,6 +65,7 @@ internal sealed class DockWindow : IDisposable
     private nint? pressedForeground;
     private bool dragging, returning, sortingSettles, externalDrop, suppressHover, systemDragging;
     private bool checkingInteraction;
+    private bool dispatchingCheckMouse;
     private Action? dragStartInterruptionForChecks;
     private int dragFrom = -1, dragTo = -1, ghostIndex = -1, insertion = -1;
     private double gripX = .5, gripY = .5, dragX, dragY, ghostX, ghostY, returnX, returnY;
@@ -290,6 +291,8 @@ internal sealed class DockWindow : IDisposable
 
     private nint Message(nint hwnd, int msg, nint wparam, nint lparam, ref bool handled)
     {
+        if (checkingInteraction && !dispatchingCheckMouse && msg is >= 0x0200 and <= 0x020E)
+        { handled = true; return 0; }
         int x = unchecked((short)(long)lparam), y = unchecked((short)((long)lparam >> 16));
         switch (msg)
         {
@@ -724,11 +727,17 @@ internal sealed class DockWindow : IDisposable
         bool previous = checkingInteraction; checkingInteraction = true;
         try
         {
-            Native.SendMessage(Handle, nativeDoubleClick ? 0x0203 : 0x0201, 1, point);
+            SendCheckMouse(nativeDoubleClick ? 0x0203 : 0x0201, 1, point);
             betweenPressAndRelease?.Invoke();
-            Native.SendMessage(Handle, 0x0202, 0, point);
+            SendCheckMouse(0x0202, 0, point);
         }
         finally { checkingInteraction = previous; }
+    }
+    private void SendCheckMouse(int message, nint wparam, nint lparam)
+    {
+        bool previous = dispatchingCheckMouse; dispatchingCheckMouse = true;
+        try { Native.SendMessage(Handle, message, wparam, lparam); }
+        finally { dispatchingCheckMouse = previous; }
     }
     internal async Task WaitUntilShownForChecks()
     {
@@ -786,21 +795,21 @@ internal sealed class DockWindow : IDisposable
                 } while (clock.Elapsed.TotalMilliseconds < until);
                 Require(stable, name);
             }
-            Native.SendMessage(Handle, 0x0201, 1, point);
+            SendCheckMouse(0x0201, 1, point);
             await Sample("FirstPressKeepsGeometry");
             double hoveredSize = original[index].Size * scale;
             float firstPressedSize = renderer.ImageSizeForChecks(index);
             Require(firstPressedSize < hoveredSize * .995 && firstPressedSize > hoveredSize * .9, "FirstPressHasScaleFeedback");
             int neighbor = index > 0 ? index - 1 : index + 1;
             Require(Math.Abs(renderer.ImageSizeForChecks(neighbor) - original[neighbor].Size * scale) < .25, "NeighborKeepsVisualSize");
-            Native.SendMessage(Handle, 0x0202, 0, point);
+            SendCheckMouse(0x0202, 0, point);
             Require(launcher.LastAction == AppClickAction.Ignore && !launcher.IsWatching, "FirstReleaseDoesNotLaunch");
             await Sample("BetweenClicksKeepsGeometry");
             Require(renderer.ImageSizeForChecks(index) > firstPressedSize + .1, "FirstReleaseReturnsTowardHoverSize");
-            Native.SendMessage(Handle, 0x0203, 1, point);
+            SendCheckMouse(0x0203, 1, point);
             await Sample("SecondPressKeepsGeometry");
             Require(renderer.ImageSizeForChecks(index) < hoveredSize * .995, "SecondPressHasScaleFeedback");
-            Native.SendMessage(Handle, 0x0202, 0, point);
+            SendCheckMouse(0x0202, 0, point);
             Require(launcher.LastAction == AppClickAction.Launch && launcher.IsWatching, "SecondReleaseLaunches");
             await Sample("SecondReleaseKeepsGeometry", 220);
             Require(Math.Abs(renderer.ImageSizeForChecks(index) - hoveredSize) < .25, "ReleaseRestoresHoveredSize");
@@ -908,8 +917,7 @@ internal sealed class DockWindow : IDisposable
         void Mouse(int message, double x, double y)
         {
             int px = (int)Math.Round(x * scale), py = (int)Math.Round(y * scale);
-            bool handled = false;
-            Message(Handle, message, 0, new((py & 0xffff) << 16 | px & 0xffff), ref handled);
+            SendCheckMouse(message, 0, new((py & 0xffff) << 16 | px & 0xffff));
         }
         async Task Rest()
         {
@@ -967,11 +975,13 @@ internal sealed class DockWindow : IDisposable
             SetShellDragForChecks(new(false, false, false, new()));
             settings.AutoHide = autoHideBefore; SetSwitchingForChecks(false);
             await WaitUntilShownForChecks(); SetSwitchingForChecks(null);
-            PreviewWave(.1); await Task.Delay(180);
+            PreviewWave(.1); pointerTargetForChecks = pointerTarget; await Task.Delay(180);
             var first = geometry.Slots[0];
             Mouse(0x0201, first.X + first.Size / 2, geometry.Baseline(height / scale) - first.Size / 2);
             await Task.Delay(260);
-            Require(hover.Value > .99 && geometry.Slots[0].Size >= first.Size - .1, "HeldIconKeepsHoverBeforeDrag");
+            bool heldHover = hover.Value > .99 && geometry.Slots[0].Size >= first.Size - .1;
+            Require(heldHover, "HeldIconKeepsHoverBeforeDrag" + (heldHover ? "" : $": hover={hover.Value:F3}, size={geometry.Slots[0].Size:F2}, before={first.Size:F2}, drag={dragging}, suppression={suppressHover}, shell={shellDrag.Active}"));
+            pointerTargetForChecks = null;
             var rest = RestGeometry;
             double x = rest.Slots[2].X + rest.Slots[2].Size / 2 + 2, y = rest.Baseline(height / scale) - rest.IconSize / 2;
             int generation = loadGeneration;
@@ -1103,7 +1113,7 @@ internal sealed class DockWindow : IDisposable
         }
         finally
         {
-            checkingInteraction = false; CancelInteraction(); syntheticHover = false;
+            checkingInteraction = false; CancelInteraction(); syntheticHover = false; pointerTargetForChecks = null;
             dragStartInterruptionForChecks = null;
             IconLoadDelayForChecks = 0; pointerOverForChecks = bottomEdgeForChecks = null; settings.AutoHide = originalAutoHide;
             SetSwitchingForChecks(null);
