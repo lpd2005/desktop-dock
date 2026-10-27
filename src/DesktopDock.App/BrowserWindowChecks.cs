@@ -79,12 +79,23 @@ internal static class BrowserWindowChecks
             var plain = new DockItem("Example browser", browser);
             Native.ShowWindowAsync(window, 0);
             await WaitFor(() => !Native.IsWindowVisible(window), "FixtureCanHideItsMainWindow");
-            Require(status.GetStates([plain], window)[0] == new DockAppState(true, false), "HiddenMainWindowKeepsRunningMarker");
+            Require(status.GetStates([plain], window)[0] == default, "HiddenMainWindowHasNoRunningMarker");
             Native.PostMessage(window, 0x0010, 0, 0);
             await WaitFor(() => !Native.IsWindow(window), "FixtureClosesForStatusCheck");
             Require(status.GetStates([plain], 0)[0] == default, "ClosedWindowRemovesRunningMarker");
         }
         finally { RegressionProbe.Close(process); }
+        string shellHost = Path.Combine(fixture, "explorer.exe");
+        File.Copy(Path.Combine(application, "DesktopDock.exe"), shellHost, true);
+        string shellData = Path.Combine(data, "shell-helper");
+        using var helper = RegressionProbe.Start("normal", shellData, shellHost);
+        try
+        {
+            await RegressionProbe.WaitReady(helper, shellData);
+            using var state = new LaunchCoordinator();
+            Require(!state.GetStates([new("File Explorer", "explorer.exe")])[0].Running, "ExplorerHelperIsNotAnOpenFileBrowser");
+        }
+        finally { RegressionProbe.Close(helper); }
         return checks;
     }
 }

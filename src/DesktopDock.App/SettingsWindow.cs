@@ -1,5 +1,7 @@
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Data;
+using System.Windows.Interop;
 using System.Windows.Media;
 using DesktopDock.Core;
 
@@ -8,126 +10,206 @@ namespace DesktopDock.App;
 internal sealed class SettingsWindow : Window
 {
     private readonly DockSettings settings;
-    private readonly Action apply;
-    private readonly Action reload;
-    private readonly ListBox applications;
-    private readonly TextBlock status;
+    private readonly Action apply, reload;
+    private readonly ListBox applications = new();
+    private readonly TextBlock status = FeatureUi.Text("设置自动保存", 11, FeatureUi.Muted);
+    private readonly TextBlock pageTitle = FeatureUi.Text("", 26);
+    private readonly TextBlock pageDescription = FeatureUi.Text("", 12, FeatureUi.Muted);
+    private readonly ContentControl pageContent = new();
     private readonly List<(CheckBox Check, Func<bool> Value)> widgetChecks = [];
+    private readonly List<(Button Button, FrameworkElement Page, string Title, string Description)> pages = [];
+    private readonly Dictionary<string, ImageSource> iconCache = new(StringComparer.OrdinalIgnoreCase);
+    private readonly List<Image> previewIcons = [];
     private bool refreshingWidgets;
+    private sealed record PinnedView(string Name, ImageSource Icon);
 
     public SettingsWindow(DockSettings settings, Action apply, Action reload, Action quit, TaskbarEnhancement taskbar)
     {
         this.settings = settings; this.apply = apply; this.reload = reload;
-        Title = "Desktop Dock · 设置";
-        Icon = AppBrand.Image();
-        ShowInTaskbar = false;
-        WindowStyle = WindowStyle.ToolWindow;
-        Width = 570; Height = 730; MinWidth = 500; MinHeight = 500;
-        WindowStartupLocation = WindowStartupLocation.CenterScreen;
-        Background = new SolidColorBrush(Color.FromRgb(20, 24, 34));
-        Foreground = Brushes.White;
-        FontFamily = new FontFamily("Microsoft YaHei UI");
-        var content = new StackPanel { Margin = new Thickness(30, 25, 30, 25) };
-        var surface = new ScrollViewer { Content = content, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
-        Content = surface;
-        content.Children.Add(new Image { Source = AppBrand.Image(), Width = 44, Height = 44, HorizontalAlignment = HorizontalAlignment.Left, Margin = new(0, 0, 0, 10) });
-        content.Children.Add(new TextBlock { Text = "DESKTOP DOCK  /  0.1 preview.16", FontSize = 11, Foreground = Brushes.LightSteelBlue });
-        content.Children.Add(new TextBlock { Text = "让桌面，轻一点。", FontSize = 29, FontWeight = FontWeights.SemiBold, Margin = new(0, 10, 0, 8) });
-        content.Children.Add(new TextBlock { Text = "透明悬浮 · 轻盈倒影 · 圆润图标", Foreground = Brushes.LightSlateGray, Margin = new(0, 0, 0, 20) });
-        content.Children.Add(new TextBlock { Text = "鼠标在主屏底边停留约 0.2 秒唤出 Dock。\n停留在图标或菜单上保持显示，移开约 0.75 秒收起。", FontSize = 11, Foreground = Brushes.LightSteelBlue, Margin = new(0, 0, 0, 16) });
-        AddSlider(content, "图标大小", 32, 80, settings.IconSize, v => settings.IconSize = v);
-        AddSlider(content, "悬停放大", 1, 1.8, settings.Magnification, v => settings.Magnification = v);
-        AddSlider(content, "底部间距", 0, 100, settings.BottomGap, v => settings.BottomGap = v);
-        AddCheck(content, "图标倒影", settings.Reflections, v => settings.Reflections = v);
-        AddCheck(content, "浅色任务栏玻璃", settings.LightTheme, v => settings.LightTheme = v);
-        AddCheck(content, "减少动画", settings.ReducedMotion, v => settings.ReducedMotion = v);
-        AddCheck(content, "自动隐藏 Dock", settings.AutoHide, v => settings.AutoHide = v);
-        AddCheck(content, "隐藏桌面图标（退出时恢复）", settings.HideDesktopIcons, v => settings.HideDesktopIcons = v);
-        content.Children.Add(new TextBlock { Text = "桌面小组件", FontSize = 15, FontWeight = FontWeights.SemiBold, Margin = new(0, 22, 0, 8) });
-        widgetChecks.Add((AddCheck(content, "时间", settings.Widgets.Clock, v => settings.Widgets.Clock = v), () => settings.Widgets.Clock));
-        widgetChecks.Add((AddCheck(content, "日历", settings.Widgets.Calendar, v => settings.Widgets.Calendar = v), () => settings.Widgets.Calendar));
-        widgetChecks.Add((AddCheck(content, "天气", settings.Widgets.Weather, v => settings.Widgets.Weather = v), () => settings.Widgets.Weather));
-        widgetChecks.Add((AddCheck(content, "浅色组件卡片", settings.Widgets.Light, v => settings.Widgets.Light = v), () => settings.Widgets.Light));
-        var cityRow = new DockPanel { Margin = new(0, 8, 0, 0) };
-        var city = new TextBox { Text = settings.Widgets.City, MaxLength = 80, Padding = new(8), VerticalContentAlignment = VerticalAlignment.Center };
-        var citySave = Button("应用城市", () => { settings.Widgets.City = city.Text.Trim(); apply(); city.Text = settings.Widgets.City; });
-        DockPanel.SetDock(citySave, Dock.Right); cityRow.Children.Add(citySave); cityRow.Children.Add(city); content.Children.Add(cityRow);
-        content.Children.Add(new TextBlock { Text = "拖动组件空白区域调整位置，悬停后点 × 可单独移除。天气仅查询填写的城市，每 30 分钟刷新；数据来自 Open-Meteo，不自动定位。", FontSize = 11, Foreground = Brushes.LightSlateGray, TextWrapping = TextWrapping.Wrap, Margin = new(0, 6, 0, 0) });
-        content.Children.Add(new TextBlock { Text = "顶部原生任务栏", FontSize = 15, FontWeight = FontWeights.SemiBold, Margin = new(0, 22, 0, 8) });
-        AddCheck(content, "启用任务栏增强（退出时恢复）", settings.TaskbarEnhancement, v => settings.TaskbarEnhancement = v);
-        AddCheck(content, "任务栏自动隐藏 · 顶边停留唤出", settings.TaskbarAutoHide, v => settings.TaskbarAutoHide = v);
-        AddCheck(content, "任务栏玻璃效果", settings.TaskbarGlass, v => settings.TaskbarGlass = v);
-        content.Children.Add(new TextBlock { Text = "先在 Windows 中将主屏任务栏设为顶部。移开约 0.75 秒收起；开始菜单与托盘菜单操作时保持显示。玻璃明暗跟随上方的“浅色任务栏玻璃”。", FontSize = 11, Foreground = Brushes.LightSlateGray, TextWrapping = TextWrapping.Wrap, Margin = new(0, 5, 0, 8) });
-        var taskbarStatus = new TextBlock { FontSize = 11, Foreground = Brushes.LightSteelBlue, TextWrapping = TextWrapping.Wrap };
+        Title = "Desktop Dock · 设置"; Icon = AppBrand.Image(); ShowInTaskbar = false; WindowStyle = WindowStyle.ToolWindow;
+        Width = 960; Height = 750; MinWidth = 760; MinHeight = 560; WindowStartupLocation = WindowStartupLocation.CenterScreen;
+        Background = Brush("#F5F7FB"); Foreground = FeatureUi.Ink; FontFamily = new("Segoe UI Variable Display, Microsoft YaHei UI");
+        SourceInitialized += (_, _) =>
+        {
+            FeatureUi.ToolWindow(this);
+            var work = System.Windows.Forms.Screen.PrimaryScreen!.WorkingArea;
+            double dpi = Native.GetDpiForWindow(new WindowInteropHelper(this).Handle) / 96d;
+            MinWidth = Math.Min(MinWidth, work.Width / dpi - 24); MinHeight = Math.Min(MinHeight, work.Height / dpi - 24);
+            Width = Math.Min(Width, work.Width / dpi - 24); Height = Math.Min(Height, work.Height / dpi - 24);
+        };
+        var shell = new Grid(); shell.ColumnDefinitions.Add(new() { Width = new(205) }); shell.ColumnDefinitions.Add(new()); Content = shell;
+        var sidebar = new DockPanel { Margin = new(17, 25, 17, 19) };
+        var brand = new StackPanel { Margin = new(10, 0, 0, 27) };
+        brand.Children.Add(new Image { Source = AppBrand.Image(), Width = 48, Height = 48, HorizontalAlignment = HorizontalAlignment.Left, Margin = new(0, 0, 0, 11) });
+        var name = FeatureUi.Text("Desktop Dock", 19); name.FontWeight = FontWeights.SemiBold; brand.Children.Add(name);
+        brand.Children.Add(FeatureUi.Text("偏好设置", 11, FeatureUi.Muted)); DockPanel.SetDock(brand, Dock.Top); sidebar.Children.Add(brand);
+        var footer = new StackPanel(); footer.Children.Add(FeatureUi.Text("0.1 preview.17", 10, FeatureUi.Muted));
+        status.Margin = new(0, 6, 0, 14); footer.Children.Add(status);
+        var exit = FeatureUi.Button("退出并恢复桌面", quit); exit.FontSize = 11; exit.Background = Brushes.Transparent; exit.Foreground = FeatureUi.Muted; footer.Children.Add(exit);
+        DockPanel.SetDock(footer, Dock.Bottom); sidebar.Children.Add(footer);
+        var navigation = new StackPanel(); sidebar.Children.Add(navigation);
+        shell.Children.Add(new Border { Background = Brush("#EDF1F7"), BorderBrush = Brush("#E1E7F0"), BorderThickness = new(0, 0, 1, 0), Child = sidebar });
+        var main = new DockPanel { Margin = new(29, 28, 29, 20) }; Grid.SetColumn(main, 1); shell.Children.Add(main);
+        var heading = new StackPanel { Margin = new(0, 0, 0, 21) }; pageTitle.FontWeight = FontWeights.SemiBold;
+        pageDescription.Margin = new(0, 7, 0, 0); pageDescription.TextWrapping = TextWrapping.Wrap;
+        heading.Children.Add(pageTitle); heading.Children.Add(pageDescription); DockPanel.SetDock(heading, Dock.Top); main.Children.Add(heading);
+        main.Children.Add(new ScrollViewer { Content = pageContent, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled });
+        void Page(string title, string description, FrameworkElement page)
+        {
+            int index = pages.Count; var button = FeatureUi.Button(title, () => SelectPage(index));
+            button.Padding = new(13, 11, 13, 11); button.Margin = new(0, 3, 0, 3); button.FontSize = 13;
+            navigation.Children.Add(button); pages.Add((button, page, title, description));
+        }
+
+        var appearance = new StackPanel();
+        appearance.Children.Add(BuildPreview());
+        var layout = Section(appearance, "布局与动画");
+        AddSlider(layout, "图标大小", "调整整排图标的基础尺寸", 32, 80, settings.IconSize, v => settings.IconSize = v);
+        AddSlider(layout, "悬停放大", "鼠标经过时平滑放大图标", 1, 1.8, settings.Magnification, v => settings.Magnification = v, true);
+        AddSlider(layout, "底部间距", "调整 Dock 与屏幕底边的距离", 0, 100, settings.BottomGap, v => settings.BottomGap = v);
+        AddCheck(layout, "图标倒影", "保留图标下方的半高渐淡倒影", settings.Reflections, v => settings.Reflections = v);
+        AddCheck(layout, "减少动画", "即时切换状态，减少视觉动效", settings.ReducedMotion, v => settings.ReducedMotion = v);
+        var behavior = Section(appearance, "显示与桌面");
+        AddCheck(behavior, "自动隐藏 Dock", "移到底边停留唤出，离开后收起", settings.AutoHide, v => settings.AutoHide = v);
+        AddCheck(behavior, "隐藏桌面图标", "在桌面面板中访问，退出 Dock 时恢复", settings.HideDesktopIcons, v => settings.HideDesktopIcons = v);
+        Page("外观与动画", "透明图标、轻盈倒影，让桌面保持清爽。", appearance);
+
+        var widgets = new StackPanel();
+        var widgetList = Section(widgets, "桌面小组件");
+        widgetChecks.Add((AddCheck(widgetList, "时间", "大号数字时钟与本地日期", settings.Widgets.Clock, v => settings.Widgets.Clock = v), () => settings.Widgets.Clock));
+        widgetChecks.Add((AddCheck(widgetList, "日历", "浏览月份，快速回到今天", settings.Widgets.Calendar, v => settings.Widgets.Calendar = v), () => settings.Widgets.Calendar));
+        widgetChecks.Add((AddCheck(widgetList, "天气", "查看当前天气与当日高低温", settings.Widgets.Weather, v => settings.Widgets.Weather = v), () => settings.Widgets.Weather));
+        widgetChecks.Add((AddCheck(widgetList, "浅色卡片", "关闭后使用深色组件", settings.Widgets.Light, v => settings.Widgets.Light = v), () => settings.Widgets.Light));
+        var citySection = Section(widgets, "天气城市");
+        citySection.Children.Add(Hint("填写城市名称，组件会显示解析后的地区。不自动获取设备位置。"));
+        var cityRow = new DockPanel { Margin = new(0, 12, 0, 5) };
+        var city = new TextBox { Text = settings.Widgets.City, MaxLength = 80, BorderThickness = new(0), Background = Brushes.Transparent, Padding = new(11, 9, 11, 9), FontSize = 13 };
+        void SaveCity() { settings.Widgets.City = city.Text.Trim(); apply(); city.Text = settings.Widgets.City; status.Text = "天气城市已保存"; }
+        city.KeyDown += (_, e) => { if (e.Key == System.Windows.Input.Key.Enter) { SaveCity(); e.Handled = true; } };
+        var citySave = FeatureUi.Button("应用城市", SaveCity, true); citySave.Margin = new(9, 0, 0, 0); DockPanel.SetDock(citySave, Dock.Right); cityRow.Children.Add(citySave);
+        cityRow.Children.Add(new Border { CornerRadius = new(10), Background = Brush("#F0F4FA"), Child = city }); citySection.Children.Add(cityRow);
+        widgets.Children.Add(Hint("拖动组件空白区域调整位置；悬停后点 × 可单独移除。天气由 Open-Meteo 提供，约每 30 分钟刷新，断网时保留上次真实数据。"));
+        Page("桌面小组件", "时间、日历和天气，一眼可见，随手可放。", widgets);
+
+        var taskbarPage = new StackPanel();
+        taskbarPage.Children.Add(new Border { CornerRadius = new(14), Background = Brush("#E8F0FD"), Padding = new(16), Margin = new(0, 0, 0, 15), Child = Hint("先在 Windows 中将主屏任务栏设为顶部，再启用增强。软件不会改变任务栏位置。") });
+        var taskbarOptions = Section(taskbarPage, "顶部任务栏");
+        AddCheck(taskbarOptions, "启用任务栏增强", "退出时恢复原来的任务栏状态", settings.TaskbarEnhancement, v => settings.TaskbarEnhancement = v);
+        AddCheck(taskbarOptions, "自动隐藏任务栏", "顶边停留唤出，移开后平滑收起", settings.TaskbarAutoHide, v => settings.TaskbarAutoHide = v);
+        AddCheck(taskbarOptions, "玻璃效果", "使用 TranslucentTB 提供透明背景", settings.TaskbarGlass, v => settings.TaskbarGlass = v);
+        AddCheck(taskbarOptions, "浅色玻璃", "关闭后使用深色任务栏玻璃", settings.LightTheme, v => settings.LightTheme = v);
+        var health = Section(taskbarPage, "当前状态"); var taskbarStatus = Hint("");
         void UpdateTaskbarStatus() => taskbarStatus.Text = taskbar.Status + "\n" + taskbar.GlassStatus;
-        UpdateTaskbarStatus(); taskbar.StatusChanged += UpdateTaskbarStatus;
-        Closed += (_, _) => taskbar.StatusChanged -= UpdateTaskbarStatus;
-        content.Children.Add(taskbarStatus);
-        var taskbarActions = new WrapPanel { Margin = new(0, 8, 0, 0) };
-        taskbarActions.Children.Add(Button("临时唤出任务栏", taskbar.Reveal));
-        taskbarActions.Children.Add(Button("恢复任务栏", () => { settings.TaskbarEnhancement = false; apply(); Close(); }));
-        content.Children.Add(taskbarActions);
-        content.Children.Add(new TextBlock { Text = "玻璃组件：TranslucentTB 2026.2 · GPLv3，来源与源码见运行包 components 目录。", FontSize = 10, Foreground = Brushes.LightSlateGray, TextWrapping = TextWrapping.Wrap, Margin = new(0, 8, 0, 0) });
-        content.Children.Add(new TextBlock { Text = "固定的入口", FontSize = 15, FontWeight = FontWeights.SemiBold, Margin = new(0, 22, 0, 10) });
-        applications = new ListBox { Height = 125, Background = new SolidColorBrush(Color.FromRgb(32, 38, 52)), Foreground = Brushes.White, BorderThickness = new(0), Padding = new(8) };
-        RefreshItems(); content.Children.Add(applications);
-        var actions = new WrapPanel { Margin = new(0, 10, 0, 8) };
-        actions.Children.Add(Button("＋ 添加应用", AddApplication));
-        actions.Children.Add(Button("＋ 文件夹", AddFolder));
-        actions.Children.Add(Button("移除所选", RemoveSelected));
-        content.Children.Add(actions);
-        content.Children.Add(new TextBlock { Text = "桌面快捷方式可拖入固定；Dock 内拖动可排序，拖离较远后松手可移除入口。", FontSize = 11, Foreground = Brushes.LightSlateGray, TextWrapping = TextWrapping.Wrap });
-        status = new TextBlock { FontSize = 11, Foreground = Brushes.LightSteelBlue, TextWrapping = TextWrapping.Wrap, Margin = new(0, 12, 0, 12) };
-        content.Children.Add(status);
-        content.Children.Add(Button("退出并恢复桌面", quit));
-    }
+        UpdateTaskbarStatus(); taskbar.StatusChanged += UpdateTaskbarStatus; Closed += (_, _) => taskbar.StatusChanged -= UpdateTaskbarStatus; health.Children.Add(taskbarStatus);
+        var taskbarActions = new WrapPanel { Margin = new(0, 12, 0, 0) };
+        taskbarActions.Children.Add(FeatureUi.Button("临时唤出", taskbar.Reveal));
+        taskbarActions.Children.Add(FeatureUi.Button("恢复原生任务栏", () => { settings.TaskbarEnhancement = false; apply(); Close(); })); health.Children.Add(taskbarActions);
+        taskbarPage.Children.Add(Hint("开始菜单和托盘交互期间保持可用。玻璃组件：TranslucentTB 2026.2 · GPLv3；许可证与源码随运行包提供。"));
+        Page("顶部任务栏", "保留原生操作习惯，调整隐藏与玻璃效果。", taskbarPage);
 
-    private void AddSlider(Panel content, string name, double min, double max, double value, Action<double> setter)
-    {
-        var caption = new TextBlock { Text = $"{name}   {value:0.##}", Foreground = Brushes.LightGray, FontSize = 12, Margin = new(0, 0, 0, 4) };
-        content.Children.Add(caption);
-        var slider = new Slider { Minimum = min, Maximum = max, Value = value, Margin = new(0, 0, 0, 14) };
-        slider.ValueChanged += (_, _) => { setter(slider.Value); caption.Text = $"{name}   {slider.Value:0.##}"; apply(); };
-        content.Children.Add(slider);
+        var pinned = new StackPanel(); var pinnedSection = Section(pinned, "固定的应用与文件夹");
+        applications.Height = 265; applications.Background = Brushes.Transparent; applications.BorderThickness = new(0); applications.Foreground = FeatureUi.Ink;
+        var row = new FrameworkElementFactory(typeof(StackPanel)); row.SetValue(StackPanel.OrientationProperty, Orientation.Horizontal);
+        var image = new FrameworkElementFactory(typeof(Image)); image.SetValue(Image.WidthProperty, 29d); image.SetValue(Image.HeightProperty, 29d); image.SetValue(Image.MarginProperty, new Thickness(0, 0, 12, 0)); image.SetBinding(Image.SourceProperty, new Binding("Icon")); row.AppendChild(image);
+        var text = new FrameworkElementFactory(typeof(TextBlock)); text.SetValue(TextBlock.VerticalAlignmentProperty, VerticalAlignment.Center); text.SetValue(TextBlock.FontSizeProperty, 13d); text.SetBinding(TextBlock.TextProperty, new Binding("Name")); row.AppendChild(text);
+        applications.ItemTemplate = new DataTemplate { VisualTree = row };
+        var itemStyle = new Style(typeof(ListBoxItem)); itemStyle.Setters.Add(new Setter(PaddingProperty, new Thickness(10, 8, 10, 8))); itemStyle.Setters.Add(new Setter(MarginProperty, new Thickness(0, 2, 0, 2))); applications.ItemContainerStyle = itemStyle;
+        pinnedSection.Children.Add(applications);
+        var actions = new WrapPanel { Margin = new(0, 13, 0, 0) };
+        actions.Children.Add(FeatureUi.Button("＋ 添加应用", AddApplication, true)); actions.Children.Add(FeatureUi.Button("＋ 文件夹", AddFolder)); actions.Children.Add(FeatureUi.Button("移除所选", RemoveSelected)); pinnedSection.Children.Add(actions);
+        pinned.Children.Add(Hint("桌面快捷方式可直接拖入 Dock；在 Dock 中拖动排序，拖远松手仅移除入口。最左侧桌面面板和最右侧设置入口会始终保留。"));
+        Page("固定应用", "管理常用入口，原文件始终保留在原处。", pinned);
+        RefreshItems(); SelectPage(0);
     }
-
-    private CheckBox AddCheck(Panel content, string text, bool value, Action<bool> setter)
+    private static Brush Brush(string value) => (Brush)new BrushConverter().ConvertFromString(value)!;
+    private static TextBlock Hint(string text) { var block = FeatureUi.Text(text, 11, FeatureUi.Muted); block.TextWrapping = TextWrapping.Wrap; block.LineHeight = 18; return block; }
+    private static StackPanel Section(Panel parent, string title)
     {
-        var box = new CheckBox { Content = text, IsChecked = value, Foreground = Brushes.White, Margin = new(0, 5, 0, 5) };
-        box.Checked += (_, _) => { if (!refreshingWidgets) { setter(true); apply(); } };
-        box.Unchecked += (_, _) => { if (!refreshingWidgets) { setter(false); apply(); } };
-        content.Children.Add(box);
-        return box;
+        var content = new StackPanel(); var heading = FeatureUi.Text(title, 14); heading.FontWeight = FontWeights.SemiBold; heading.Margin = new(0, 0, 0, 13); content.Children.Add(heading);
+        parent.Children.Add(new Border { Child = content, CornerRadius = new(16), Background = Brushes.White, BorderBrush = Brush("#E5EAF2"), BorderThickness = new(1), Padding = new(19, 17, 19, 14), Margin = new(0, 0, 0, 15) });
+        return content;
+    }
+    private void SelectPage(int index)
+    {
+        pageTitle.Text = pages[index].Title; pageDescription.Text = pages[index].Description; pageContent.Content = pages[index].Page;
+        for (int i = 0; i < pages.Count; i++) { pages[i].Button.Background = i == index ? Brush("#DCE9FB") : Brushes.Transparent; pages[i].Button.Foreground = i == index ? FeatureUi.Blue : FeatureUi.Ink; }
+    }
+    internal void SelectPageForChecks(int index) => SelectPage(index);
+    private FrameworkElement BuildPreview()
+    {
+        var panel = new DockPanel(); var title = FeatureUi.Text("Dock 预览", 12); DockPanel.SetDock(title, Dock.Top); panel.Children.Add(title);
+        var dock = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center, Margin = new(0, 14, 0, 13) };
+        foreach (var (target, active) in new[] { ("dock:apps", -1), ("dock:settings", 1), ("ms-settings:", 0) })
+        {
+            var item = new StackPanel { Margin = new(13, 0, 13, 0), VerticalAlignment = VerticalAlignment.Center };
+            var icon = new Image { Source = IconService.Bitmap(IconService.Load(new("Preview", target))), Width = 38, Height = 38 }; previewIcons.Add(icon); item.Children.Add(icon);
+            item.Children.Add(new Border { Width = active == 1 ? 22 : 10, Height = 3, CornerRadius = new(1.5), Margin = new(0, 6, 0, 0), Background = active == 1 ? FeatureUi.Blue : Brushes.White, Opacity = active < 0 ? 0 : 1 }); dock.Children.Add(item);
+        }
+        DockPanel.SetDock(dock, Dock.Top); panel.Children.Add(dock);
+        var hint = FeatureUi.Text("已开启：白色短线     当前使用：蓝色长线", 10, FeatureUi.Ink); hint.HorizontalAlignment = HorizontalAlignment.Center; panel.Children.Add(hint);
+        return new Border { Child = panel, CornerRadius = new(18), Padding = new(19, 15, 19, 15), Margin = new(0, 0, 0, 18), Background = new LinearGradientBrush(Color.FromRgb(199, 216, 237), Color.FromRgb(230, 238, 249), 25) };
+    }
+    private static Grid Row(Panel parent, string title, string description, FrameworkElement control)
+    {
+        var row = new Grid { Margin = new(0, 4, 0, 12) }; row.ColumnDefinitions.Add(new()); row.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+        var label = new StackPanel { Margin = new(0, 0, 15, 0), VerticalAlignment = VerticalAlignment.Center };
+        label.Children.Add(FeatureUi.Text(title, 13)); var detail = Hint(description); detail.Margin = new(0, 3, 0, 0); label.Children.Add(detail); row.Children.Add(label);
+        control.VerticalAlignment = VerticalAlignment.Center; Grid.SetColumn(control, 1); row.Children.Add(control); parent.Children.Add(row); return row;
+    }
+    private void AddSlider(Panel content, string title, string description, double min, double max, double value, Action<double> setter, bool factor = false)
+    {
+        var controls = new StackPanel { Orientation = Orientation.Horizontal };
+        var slider = new Slider { Minimum = min, Maximum = max, Value = value, Width = 135, VerticalAlignment = VerticalAlignment.Center, SmallChange = factor ? .05 : 1, IsMoveToPointEnabled = true };
+        slider.Template = (ControlTemplate)System.Windows.Markup.XamlReader.Parse("""
+            <ControlTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" TargetType="{x:Type Slider}">
+              <Grid Height="24">
+                <Track x:Name="PART_Track" VerticalAlignment="Center" Minimum="{TemplateBinding Minimum}" Maximum="{TemplateBinding Maximum}" Value="{Binding Value, RelativeSource={RelativeSource TemplatedParent}, Mode=TwoWay}" IsDirectionReversed="{TemplateBinding IsDirectionReversed}">
+                  <Track.DecreaseRepeatButton><RepeatButton Command="{x:Static Slider.DecreaseLarge}" Focusable="False"><RepeatButton.Template><ControlTemplate TargetType="RepeatButton"><Border Height="4" Background="#3783E4" CornerRadius="2" VerticalAlignment="Center"/></ControlTemplate></RepeatButton.Template></RepeatButton></Track.DecreaseRepeatButton>
+                  <Track.IncreaseRepeatButton><RepeatButton Command="{x:Static Slider.IncreaseLarge}" Focusable="False"><RepeatButton.Template><ControlTemplate TargetType="RepeatButton"><Border Height="4" Background="#DCE3EE" CornerRadius="2" VerticalAlignment="Center"/></ControlTemplate></RepeatButton.Template></RepeatButton></Track.IncreaseRepeatButton>
+                  <Track.Thumb><Thumb Width="15" Height="15"><Thumb.Template><ControlTemplate TargetType="Thumb"><Ellipse Fill="White" Stroke="#3783E4" StrokeThickness="2"/></ControlTemplate></Thumb.Template></Thumb></Track.Thumb>
+                </Track>
+              </Grid>
+            </ControlTemplate>
+            """);
+        var caption = FeatureUi.Text(factor ? $"{value:0.00}×" : $"{value:0}", 11); caption.Width = 43; caption.TextAlignment = TextAlignment.Right;
+        slider.ValueChanged += (_, _) => { setter(slider.Value); caption.Text = factor ? $"{slider.Value:0.00}×" : $"{slider.Value:0}"; foreach (var icon in previewIcons) icon.Width = icon.Height = Math.Clamp(settings.IconSize * .72, 24, 48); apply(); status.Text = "设置已保存"; };
+        controls.Children.Add(slider); controls.Children.Add(caption); Row(content, title, description, controls);
+    }
+    private CheckBox AddCheck(Panel content, string title, string description, bool value, Action<bool> setter)
+    {
+        var box = new CheckBox { IsChecked = value, Width = 38, Height = 22, Cursor = System.Windows.Input.Cursors.Hand };
+        System.Windows.Automation.AutomationProperties.SetName(box, title);
+        var track = new FrameworkElementFactory(typeof(Border)); track.Name = "Track"; track.SetValue(Border.CornerRadiusProperty, new CornerRadius(11)); track.SetValue(Border.BackgroundProperty, Brush("#CCD5E3"));
+        var thumb = new FrameworkElementFactory(typeof(Border)); thumb.Name = "Thumb"; thumb.SetValue(Border.WidthProperty, 16d); thumb.SetValue(Border.HeightProperty, 16d); thumb.SetValue(Border.CornerRadiusProperty, new CornerRadius(8)); thumb.SetValue(Border.BackgroundProperty, Brushes.White); thumb.SetValue(Border.MarginProperty, new Thickness(3)); thumb.SetValue(Border.HorizontalAlignmentProperty, HorizontalAlignment.Left); track.AppendChild(thumb);
+        var template = new ControlTemplate(typeof(CheckBox)) { VisualTree = track };
+        var enabled = new Trigger { Property = CheckBox.IsCheckedProperty, Value = true }; enabled.Setters.Add(new Setter(Border.BackgroundProperty, FeatureUi.Blue, "Track")); enabled.Setters.Add(new Setter(HorizontalAlignmentProperty, HorizontalAlignment.Right, "Thumb")); template.Triggers.Add(enabled);
+        box.Template = template;
+        box.Checked += (_, _) => { if (!refreshingWidgets) { setter(true); apply(); status.Text = "设置已保存"; } };
+        box.Unchecked += (_, _) => { if (!refreshingWidgets) { setter(false); apply(); status.Text = "设置已保存"; } };
+        Row(content, title, description, box); return box;
     }
     internal void RefreshWidgets()
     {
-        refreshingWidgets = true;
-        try { foreach (var (check, value) in widgetChecks) check.IsChecked = value(); }
-        finally { refreshingWidgets = false; }
+        refreshingWidgets = true; try { foreach (var (check, value) in widgetChecks) check.IsChecked = value(); } finally { refreshingWidgets = false; }
     }
-
-    private static Button Button(string label, Action action)
+    internal void RefreshItems()
     {
-        var button = new Button { Content = label, Padding = new(12, 6, 12, 6), Margin = new(0, 0, 8, 0), Background = new SolidColorBrush(Color.FromRgb(48, 61, 83)), Foreground = Brushes.White, BorderThickness = new(0) };
-        button.Click += (_, _) => action(); return button;
+        applications.ItemsSource = settings.Items.Select(item =>
+        {
+            if (!iconCache.TryGetValue(item.Target, out var icon)) iconCache[item.Target] = icon = IconService.Bitmap(IconService.Load(item));
+            return new PinnedView(item.Name, icon);
+        }).ToArray();
     }
-
-    internal void RefreshItems() => applications.ItemsSource = settings.Items.Select(x => x.Name).ToArray();
     private void AddApplication()
     {
         var dialog = new Microsoft.Win32.OpenFileDialog { Filter = "应用与快捷方式|*.exe;*.lnk;*.url|所有文件|*.*", Multiselect = true };
         if (dialog.ShowDialog(this) != true) return;
-        foreach (var file in dialog.FileNames) settings.Items.Add(new(System.IO.Path.GetFileNameWithoutExtension(file), file));
-        SaveItems();
+        foreach (string file in dialog.FileNames) settings.Items.Add(new(System.IO.Path.GetFileNameWithoutExtension(file), file)); SaveItems();
     }
     private void AddFolder()
     {
-        var dialog = new Microsoft.Win32.OpenFolderDialog();
-        if (dialog.ShowDialog(this) == true) { settings.Items.Add(new(System.IO.Path.GetFileName(dialog.FolderName), dialog.FolderName)); SaveItems(); }
+        var dialog = new Microsoft.Win32.OpenFolderDialog(); if (dialog.ShowDialog(this) == true) { settings.Items.Add(new(System.IO.Path.GetFileName(dialog.FolderName), dialog.FolderName)); SaveItems(); }
     }
-    private void RemoveSelected()
-    {
-        if (applications.SelectedIndex >= 0) { settings.Items.RemoveAt(applications.SelectedIndex); SaveItems(); }
-    }
-    private void SaveItems() { settings.Normalize(); RefreshItems(); reload(); status.Text = "入口已保存。"; }
+    private void RemoveSelected() { if (applications.SelectedIndex >= 0) { settings.Items.RemoveAt(applications.SelectedIndex); SaveItems(); } }
+    private void SaveItems() { settings.Normalize(); RefreshItems(); reload(); status.Text = "入口已保存"; }
 }

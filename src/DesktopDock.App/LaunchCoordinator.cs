@@ -121,7 +121,7 @@ internal sealed class LaunchCoordinator : IDisposable
 
     internal DockAppState[] GetStates(IReadOnlyList<DockItem> items, nint? foregroundWindow = null)
     {
-        var windows = Windows(includeHidden: true).Where(WindowClose.CanClose).ToArray();
+        var windows = Windows().Where(WindowClose.CanClose).ToArray();
         var snapshot = new MatchSnapshot(readAppId);
         nint foreground = foregroundWindow ?? Native.GetAncestor(Native.GetForegroundWindow(), 3);
         var result = new DockAppState[items.Count];
@@ -135,6 +135,7 @@ internal sealed class LaunchCoordinator : IDisposable
             bound.TryGetValue(key, out var cached);
             foreach (nint window in windows)
             {
+                if (string.Equals(info.ProcessName, "explorer", StringComparison.OrdinalIgnoreCase) && info.AppId is null && !WindowClose.IsFileExplorer(window)) continue;
                 bool associated = false;
                 if (cached is not null && window == cached.Handle)
                 {

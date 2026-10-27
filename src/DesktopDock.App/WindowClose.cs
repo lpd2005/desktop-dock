@@ -5,6 +5,12 @@ namespace DesktopDock.App;
 
 internal static class WindowClose
 {
+    internal static bool IsFileExplorer(nint window)
+    {
+        var name = new StringBuilder(256);
+        Native.GetClassName(window, name, name.Capacity);
+        return name.ToString() is "CabinetWClass" or "ExploreWClass";
+    }
     internal static bool CanClose(nint window)
     {
         if (window == 0 || !Native.IsWindow(window)) return false;

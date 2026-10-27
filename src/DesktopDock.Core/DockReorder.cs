@@ -3,24 +3,24 @@ namespace DesktopDock.Core;
 public static class DockReorder
 {
     public const double DragThreshold = 6;
-    public static int Target(DockGeometry geometry, int count, int source, double x)
+    public static int Target(DockGeometry geometry, int count, int source, double x, int start = 0)
     {
-        if (source < 0 || source >= count || count > geometry.Slots.Length) return -1;
+        if (start < 0 || source < start || source >= start + count || start + count > geometry.Slots.Length) return -1;
         int target = source;
-        while (target + 1 < count && x > Center(geometry.Slots[target + 1])) target++;
-        while (target > 0 && x < Center(geometry.Slots[target - 1])) target--;
+        while (target + 1 < start + count && x > Center(geometry.Slots[target + 1])) target++;
+        while (target > start && x < Center(geometry.Slots[target - 1])) target--;
         return target;
     }
-    public static int Insertion(DockGeometry geometry, int count, double x)
+    public static int Insertion(DockGeometry geometry, int count, double x, int start = 0)
     {
-        for (int i = 0; i < Math.Min(count, geometry.Slots.Length); i++)
-            if (x < Center(geometry.Slots[i])) return i;
+        for (int i = 0; i < Math.Min(count, geometry.Slots.Length - start); i++)
+            if (x < Center(geometry.Slots[start + i])) return i;
         return count;
     }
-    public static int[] Order(int total, int from, int to, int movable)
+    public static int[] Order(int total, int from, int to, int movable, int start = 0)
     {
         var order = Enumerable.Range(0, total).ToList();
-        if (from < 0 || from >= movable || to < 0 || to >= movable || movable > total) return order.ToArray();
+        if (start < 0 || from < start || from >= start + movable || to < start || to >= start + movable || start + movable > total) return order.ToArray();
         order.RemoveAt(from); order.Insert(to, from);
         return order.ToArray();
     }

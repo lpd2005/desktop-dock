@@ -177,7 +177,7 @@ internal sealed class DockWindow : IDisposable
     public async Task LoadIcons(bool fromDrop = false)
     {
         int generation = ++loadGeneration;
-        var localEntries = settings.Items.Concat([new DockItem("Dock 设置", "dock:settings"), new DockItem("桌面应用", "dock:apps")]).ToArray();
+        var localEntries = new[] { new DockItem("桌面应用", "dock:apps") }.Concat(settings.Items).Append(new("Dock 设置", "dock:settings")).ToArray();
         if (fromDrop || pendingDropGeneration != 0)
         {
             pendingDropGeneration = generation;
@@ -238,7 +238,7 @@ internal sealed class DockWindow : IDisposable
         if (entries.Count == 0) return;
         geometry = DockLayout.Calculate(entries.Count, settings.IconSize, settings.Magnification,
             hover.Value > 0 ? pointer.Value : null, width / scale, hover.Value, separatorBefore);
-        int[]? order = dragging ? DockReorder.Order(entries.Count, dragFrom, dragTo, settings.Items.Count) : null;
+        int[]? order = dragging ? DockReorder.Order(entries.Count, dragFrom, dragTo, settings.Items.Count, start: 1) : null;
         renderer.Layout(geometry, width, height, scale, order, !settings.ReducedMotion && (dragging || returning || sortingSettles), dt, ghostIndex, insertion);
         footprint = DockFootprint.Create(geometry, width / scale, height / scale);
         if (!autoHidden && !blocked) region.Update(footprint, scale);
@@ -300,7 +300,7 @@ internal sealed class DockWindow : IDisposable
         if (dragging)
         {
             dragX = cursor.X / scale; dragY = cursor.Y / scale;
-            dragTo = DockReorder.Target(RestGeometry, settings.Items.Count, dragFrom, dragX);
+            dragTo = DockReorder.Target(RestGeometry, settings.Items.Count, dragFrom, dragX, start: 1);
             if (!down)
             {
                 interactionVersion++;
@@ -337,13 +337,13 @@ internal sealed class DockWindow : IDisposable
                     NoteInteraction(); lastMouse = new() { X = x, Y = y };
                     if (pressedIndex < 0 && !returning) suppressHover = false;
                 }
-                if (pressedIndex >= 0 && pressedIndex < settings.Items.Count)
+                if (IsPinnedIndex(pressedIndex))
                 {
                     if (!dragging && DockReorder.Moved((x - pressedPoint.X) / scale, (y - pressedPoint.Y) / scale)) BeginIconDrag();
                     if (dragging)
                     {
                         dragX = x / scale; dragY = y / scale;
-                        dragTo = DockReorder.Target(RestGeometry, settings.Items.Count, dragFrom, dragX);
+                        dragTo = DockReorder.Target(RestGeometry, settings.Items.Count, dragFrom, dragX, start: 1);
                         RenderLayout(); StartRendering(); break;
                     }
                 }
@@ -462,7 +462,7 @@ internal sealed class DockWindow : IDisposable
             uint id = (uint)actions.Count + 1; actions[id] = action;
             Native.AppendMenu(menu, enabled ? 0u : 3u, id, title);
         }
-        if (index >= 0 && index < settings.Items.Count)
+        if (IsPinnedIndex(index))
         {
             foreach (var itemAction in ItemMenuActions(entries[index])) Add(itemAction.Title, itemAction.Invoke, itemAction.Enabled);
             Native.AppendMenu(menu, 0x800, 0, null);
@@ -606,6 +606,7 @@ internal sealed class DockWindow : IDisposable
     }
 
     private DockGeometry RestGeometry => DockLayout.Calculate(entries.Count, settings.IconSize, settings.Magnification, null, width / scale, separatorBefore: separatorBefore);
+    private bool IsPinnedIndex(int index) => index >= 1 && index <= settings.Items.Count && index < entries.Count - 1;
     private bool CanDropSort(double x, double y)
     {
         var rest = RestGeometry;
@@ -616,12 +617,12 @@ internal sealed class DockWindow : IDisposable
     {
         int index = pressedIndex, version = interactionVersion, generation = loadGeneration;
         if (startingDrag || dragging || disposed || pendingDropGeneration != 0 || index < 0
-            || index >= settings.Items.Count || index >= entries.Count - 1) return;
+            || !IsPinnedIndex(index)) return;
         var item = entries[index];
-        if (settings.Items[index] != item || !iconCache.TryGetValue(item.Target, out var pixels)) return;
+        if (settings.Items[index - 1] != item || !iconCache.TryGetValue(item.Target, out var pixels)) return;
         bool Current() => !disposed && interactionVersion == version && loadGeneration == generation
             && pressedIndex == index && pendingDropGeneration == 0 && index < entries.Count - 1
-            && index < settings.Items.Count && entries[index] == item && settings.Items[index] == item;
+            && IsPinnedIndex(index) && entries[index] == item && settings.Items[index - 1] == item;
 
         startingDrag = true;
         BitmapOverlay? prepared = null;
@@ -670,8 +671,7 @@ internal sealed class DockWindow : IDisposable
     private void EndIconDrag(bool commit, bool remove = false)
     {
         if (!dragging) return;
-        if (dragFrom < 0 || dragFrom >= settings.Items.Count || dragFrom >= entries.Count - 1
-            || entries[dragFrom] != settings.Items[dragFrom])
+        if (!IsPinnedIndex(dragFrom) || entries[dragFrom] != settings.Items[dragFrom - 1])
         { dragging = false; FinishGhost(); return; }
         if (remove)
         {
@@ -679,9 +679,9 @@ internal sealed class DockWindow : IDisposable
             dragging = false; FinishGhost(false); RemoveEntry(item); suppressHover = true;
             return;
         }
-        if (commit && dragFrom != dragTo && dragTo >= 0 && dragTo < settings.Items.Count && dragTo < entries.Count - 1)
+        if (commit && dragFrom != dragTo && IsPinnedIndex(dragTo))
         {
-            var item = settings.Items[dragFrom]; settings.Items.RemoveAt(dragFrom); settings.Items.Insert(dragTo, item);
+            var item = settings.Items[dragFrom - 1]; settings.Items.RemoveAt(dragFrom - 1); settings.Items.Insert(dragTo - 1, item);
             var entry = entries[dragFrom]; entries.RemoveAt(dragFrom); entries.Insert(dragTo, entry);
             renderer.MoveIcon(dragFrom, dragTo); ghostIndex = dragTo;
             separatorBefore = entries.FindIndex(x => System.IO.Directory.Exists(Environment.ExpandEnvironmentVariables(x.Target)) || x.Target.StartsWith("shell:", StringComparison.OrdinalIgnoreCase));
@@ -722,7 +722,7 @@ internal sealed class DockWindow : IDisposable
         if (disposed) return;
         NoteInteraction();
         Native.ScreenToClient(Handle, ref point);
-        externalDrop = allowed; insertion = allowed ? DockReorder.Insertion(RestGeometry, settings.Items.Count, point.X / scale) : -1;
+        externalDrop = allowed; insertion = allowed ? DockReorder.Insertion(RestGeometry, settings.Items.Count, point.X / scale, start: 1) + 1 : -1;
         hover.Reset(0); renderer.ResetPressFeedback(); suppressHover = true; labelTimer.Stop(); label.IsOpen = false;
         RenderLayout(); CheckVisibility();
     }
@@ -730,7 +730,7 @@ internal sealed class DockWindow : IDisposable
     {
         if (disposed) return 0;
         Native.ScreenToClient(Handle, ref point);
-        int index = DockReorder.Insertion(RestGeometry, settings.Items.Count, point.X / scale), added = 0;
+        int index = DockReorder.Insertion(RestGeometry, settings.Items.Count, point.X / scale, start: 1), added = 0;
         foreach (string path in paths)
         {
             if (settings.Items.Count >= 40) break;
@@ -793,18 +793,18 @@ internal sealed class DockWindow : IDisposable
             var states = new DockAppState[entries.Count];
             void Present() { renderer.SetAppStates(states); RenderLayout(); StartRendering(); }
             Present(); await Task.Delay(250);
-            Require(!renderer.StateForChecks(0).Visible && renderer.StateForChecks(0).BackgroundOpacity == 0, "ClosedHasNoMarkerOrBackground");
+            Require(!renderer.StateForChecks(0).Visible, "ClosedHasNoMarker");
             var identities = renderer.IconIdentities.ToArray();
             states[0] = new(true, false); Present(); await Task.Delay(230);
             var running = renderer.StateForChecks(0);
-            Require(running.Visible && Math.Abs(running.Width / scale - 10) < .01, "RunningUsesShortBlueLine");
-            Require(running.BackgroundOpacity > .06f && running.BackgroundOpacity < .08f, "RunningHasSubtleBackground");
+            Require(running.Visible && Math.Abs(running.Width / scale - 10) < .01, "RunningUsesShortLine");
+            Require(running.Color.R == 255 && running.Color.G == 255 && running.Color.B == 255, "InactiveRunningLineIsWhite");
             states[0] = new(true, true); Present(); await Task.Delay(55);
             var middle = renderer.StateForChecks(0);
             Require(middle.Width > running.Width && middle.Width < 22 * scale && renderer.StateAnimationActive, "ActiveMarkerTransitionsSmoothly");
             await Task.Delay(230);
             var active = renderer.StateForChecks(0);
-            Require(Math.Abs(active.Width / scale - 22) < .01 && active.BackgroundOpacity > .29, "ActiveUsesPillAndStrongerBackground");
+            Require(Math.Abs(active.Width / scale - 22) < .01 && active.Color.R == 77 && active.Color.G == 170 && active.Color.B == 255, "ActiveUsesLongBlueLine");
             Require(!renderer.StateAnimationActive && !rendering, "SettledStateStopsAnimationClock");
             Require(renderer.IconIdentities.SequenceEqual(identities), "StatusDoesNotRecreateIconSurfaces");
             renderer.Layout(geometry, width, height, scale, hidden: 0);
@@ -821,7 +821,7 @@ internal sealed class DockWindow : IDisposable
             states[0] = new(true, true); Present();
             Require(!renderer.StateAnimationActive && Math.Abs(renderer.StateForChecks(0).Width / scale - 22) < .01, "ReducedMotionChangesImmediately");
             states[0] = default; Present();
-            Require(!renderer.StateForChecks(0).Visible && renderer.StateForChecks(0).BackgroundOpacity == 0, "ClosingRemovesMarkerAndBackground");
+            Require(!renderer.StateForChecks(0).Visible, "ClosingRemovesMarker");
             renderer.SetTheme(settings);
             stateRefreshForChecks = oldRefresh;
             visibilityForChecks = false; CheckVisibility();
@@ -1056,7 +1056,12 @@ internal sealed class DockWindow : IDisposable
             Require(Native.WindowFromPoint(new() { X = left + (int)((inputSlot.X + inputSlot.Size / 2) * scale),
                 Y = top + (int)((RestGeometry.Baseline(height / scale) - inputSlot.Size / 2) * scale) }) == Handle,
                 "IconAreaHitsShapedInputWindow");
-            var interruptedSlot = RestGeometry.Slots[0];
+            Require(entries[0].Target == "dock:apps" && entries[^1].Target == "dock:settings", "BuiltInEntriesAnchorOppositeEnds");
+            var launcherSlot = RestGeometry.Slots[0];
+            double launcherX = launcherSlot.X + launcherSlot.Size / 2, launcherY = RestGeometry.Baseline(height / scale) - launcherSlot.Size / 2;
+            Mouse(0x0201, launcherX, launcherY); Mouse(0x0200, launcherX, launcherY - 110); Mouse(0x0202, launcherX, launcherY - 110);
+            Require(!dragging && settings.Items.SequenceEqual(original) && entries[0].Target == "dock:apps", "DesktopEntryCannotBeDraggedOrRemoved");
+            var interruptedSlot = RestGeometry.Slots[1];
             double interruptedX = interruptedSlot.X + interruptedSlot.Size / 2;
             double interruptedY = RestGeometry.Baseline(height / scale) - interruptedSlot.Size / 2;
             Mouse(0x0201, interruptedX, interruptedY);
@@ -1079,7 +1084,7 @@ internal sealed class DockWindow : IDisposable
             };
             Mouse(0x0200, interruptedX + 10, interruptedY);
             dragStartInterruptionForChecks = null;
-            Require(!dragging && ghost is null && pressedIndex == 0 && settings.Items.SequenceEqual(original),
+            Require(!dragging && ghost is null && pressedIndex == 1 && settings.Items.SequenceEqual(original),
                 "NewPressInvalidatesPreviousDragPreparation");
             Native.SendMessage(Handle, 0x001F, 0, 0);
             bool autoHideBefore = settings.AutoHide;
@@ -1098,17 +1103,17 @@ internal sealed class DockWindow : IDisposable
             settings.AutoHide = autoHideBefore; SetSwitchingForChecks(false);
             await WaitUntilShownForChecks(); SetSwitchingForChecks(null);
             PreviewWave(.1); pointerTargetForChecks = pointerTarget; await Task.Delay(180);
-            var first = geometry.Slots[0];
+            var first = geometry.Slots[1];
             Mouse(0x0201, first.X + first.Size / 2, geometry.Baseline(height / scale) - first.Size / 2);
             await Task.Delay(260);
-            bool heldHover = hover.Value > .99 && geometry.Slots[0].Size >= first.Size - .1;
-            Require(heldHover, "HeldIconKeepsHoverBeforeDrag" + (heldHover ? "" : $": hover={hover.Value:F3}, size={geometry.Slots[0].Size:F2}, before={first.Size:F2}, drag={dragging}, suppression={suppressHover}, shell={shellDrag.Active}"));
+            bool heldHover = hover.Value > .99 && geometry.Slots[1].Size >= first.Size - .1;
+            Require(heldHover, "HeldIconKeepsHoverBeforeDrag" + (heldHover ? "" : $": hover={hover.Value:F3}, size={geometry.Slots[1].Size:F2}, before={first.Size:F2}, drag={dragging}, suppression={suppressHover}, shell={shellDrag.Active}"));
             pointerTargetForChecks = null;
             var rest = RestGeometry;
-            double x = rest.Slots[2].X + rest.Slots[2].Size / 2 + 2, y = rest.Baseline(height / scale) - rest.IconSize / 2;
+            double x = rest.Slots[3].X + rest.Slots[3].Size / 2 + 2, y = rest.Baseline(height / scale) - rest.IconSize / 2;
             int generation = loadGeneration;
             Mouse(0x0200, x, y); await Task.Delay(100);
-            Require(dragging && ghost is not null && dragTo == 2, "FloatingGhostAndLiveReorder");
+            Require(dragging && ghost is not null && dragTo == 3, "FloatingGhostAndLiveReorder");
             Require(geometry.Slots.All(slot => Math.Abs(slot.Size - geometry.IconSize) < .001), "NoMagnificationDuringDrag");
             Require(ghost is not null && (Native.GetWindowLongPtr(ghost.Handle, -20).ToInt64() & (0x80 | 0x20 | 0x08000000)) == (0x80 | 0x20 | 0x08000000), "GhostDoesNotActivateOrTakeInput");
             if (holdForInspection) await Task.Delay(20000);
@@ -1116,9 +1121,9 @@ internal sealed class DockWindow : IDisposable
             Require(settings.Items[2] == original[0] && loadGeneration == generation, "SortCommitsWithoutReloadingIcons");
             Require(ghost is null && !rendering, "DropSettlesAndClockStops");
             var sorted = settings.Items.ToArray();
-            rest = RestGeometry; first = rest.Slots[0];
+            rest = RestGeometry; first = rest.Slots[1];
             Mouse(0x0201, first.X + first.Size / 2, y);
-            Mouse(0x0200, rest.Slots[3].X + rest.IconSize / 2 + 2, y);
+            Mouse(0x0200, rest.Slots[4].X + rest.IconSize / 2 + 2, y);
             await Task.Delay(60);
             bool cancelled = false; Message(Handle, 0x001F, 0, 0, ref cancelled); await Rest();
             Require(settings.Items.SequenceEqual(sorted) && ghost is null, "CancelledSortPreservesOrder");
@@ -1130,7 +1135,7 @@ internal sealed class DockWindow : IDisposable
             System.IO.Directory.CreateDirectory(folder); System.IO.File.WriteAllText(unsupported, "Example");
             RegressionProbe.CreateShortcut(shortcut, Environment.ProcessPath!, "--probe-window normal --data-dir \"" + System.IO.Path.Combine(data, "never-launched") + "\"");
             byte[] before = System.IO.File.ReadAllBytes(shortcut);
-            var point = new Native.Point { X = left + (int)(RestGeometry.Slots[1].X * scale), Y = top + (int)(y * scale) };
+            var point = new Native.Point { X = left + (int)(RestGeometry.Slots[2].X * scale), Y = top + (int)(y * scale) };
             int count = settings.Items.Count;
             int effect = dropTarget.DropFilesForChecks([shortcut, folder], point);
             for (int i = 0; i < 80 && entries.Count != settings.Items.Count + 2; i++) await Task.Delay(25);
@@ -1142,7 +1147,7 @@ internal sealed class DockWindow : IDisposable
             Require(!externalDrop && insertion == -1, "DropFeedbackClears");
 
             rest = RestGeometry;
-            double removeX = rest.Slots[1].X + rest.Slots[1].Size / 2;
+            double removeX = rest.Slots[2].X + rest.Slots[2].Size / 2;
             double removeY = rest.BodyTop(height / scale) - 100;
             Mouse(0x0201, removeX, rest.Baseline(height / scale) - rest.IconSize / 2);
             Mouse(0x0200, removeX, removeY);

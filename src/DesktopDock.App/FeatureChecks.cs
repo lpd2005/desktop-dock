@@ -150,6 +150,40 @@ internal static class FeatureChecks
             }
         }
         finally { RegressionProbe.Close(probe); }
+        var sampleSettings = new DockSettings { Items = [new("Example application", "ms-settings:"), new("Example folder", "shell:MyComputerFolder")], Widgets = new() { City = "Example City" } };
+        int applied = 0;
+        using var taskbar = new TaskbarEnhancement(Path.Combine(data, "settings-ui"));
+        var preferences = new SettingsWindow(sampleSettings, () => applied++, () => { }, () => { }, taskbar);
+        try
+        {
+            preferences.Show();
+            foreach (var (index, name) in new[] { (0, "appearance"), (1, "widgets"), (2, "taskbar"), (3, "pinned") })
+            {
+                preferences.SelectPageForChecks(index); preferences.UpdateLayout();
+                Capture(preferences, Path.Combine(data, "settings-" + name + ".png"));
+                Require(preferences.IsVisible && Children<ScrollViewer>(preferences).Any(), "SettingsPageRenders" + name);
+            }
+            preferences.SelectPageForChecks(0); preferences.UpdateLayout();
+            Children<Slider>(preferences).First().Value = 56;
+            Require(sampleSettings.IconSize == 56 && applied == 1, "SettingsSliderStillAppliesImmediately");
+            preferences.SelectPageForChecks(1); preferences.UpdateLayout();
+            var time = Children<CheckBox>(preferences).Single(x => System.Windows.Automation.AutomationProperties.GetName(x) == "时间");
+            time.IsChecked = false;
+            Require(!sampleSettings.Widgets.Clock && applied == 2, "SettingsSwitchPreservesWidgetAction");
+            sampleSettings.Widgets.Clock = true; preferences.RefreshWidgets();
+            Require(time.IsChecked == true && applied == 2, "SettingsRefreshDoesNotApplyAgain");
+            preferences.SelectPageForChecks(3); preferences.UpdateLayout();
+            Children<ListBox>(preferences).Single().SelectedIndex = 0;
+            Children<Button>(preferences).Single(x => x.Content as string == "移除所选").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Require(sampleSettings.Items.Count == 1, "SettingsRemoveOnlyChangesPinnedList");
+        }
+        finally { preferences.Close(); }
+        var brand = new FormatConvertedBitmap(AppBrand.Image(), PixelFormats.Pbgra32, null, 0);
+        byte[] brandPixels = new byte[brand.PixelWidth * brand.PixelHeight * 4]; brand.CopyPixels(brandPixels, brand.PixelWidth * 4, 0);
+        Require(brandPixels[3] == 0 && brandPixels[^1] == 0, "BrandHasTransparentOutsideBackground");
+        int pale = 0;
+        for (int i = 0; i < brandPixels.Length; i += 4) if (brandPixels[i + 3] > 245 && brandPixels[i] > 190 && brandPixels[i + 1] > 220 && brandPixels[i + 2] > 230) pale++;
+        Require(pale > 1000, "BrandRetainsInternalPaleStripe");
         return checks;
     }
 }

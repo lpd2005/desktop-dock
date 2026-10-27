@@ -21,7 +21,6 @@ internal sealed class CompositionRenderer : IDisposable
     private readonly ContainerVisual root;
     private readonly ContainerVisual row;
     private readonly ContainerVisual reflectionRow;
-    private readonly ContainerVisual backgroundRow;
     private readonly ContainerVisual indicatorRow;
     private readonly ID3D11Device d3d;
     private readonly ID2D1Device d2d;
@@ -42,10 +41,10 @@ internal sealed class CompositionRenderer : IDisposable
     public bool StateAnimationActive { get; private set; }
     internal IReadOnlyList<object> IconIdentities => icons.Select(icon => (object)icon.Image).ToArray();
     internal float ImageSizeForChecks(int index) => icons[index].Image.Scale.X * IconService.Resolution;
-    internal (DockAppState State, bool Visible, float Width, float BackgroundOpacity) StateForChecks(int index)
+    internal (DockAppState State, bool Visible, float Width, WColor Color) StateForChecks(int index)
     {
         var icon = icons[index];
-        return (icon.State, icon.Indicator.Visual.IsVisible, icon.Indicator.Geometry.Size.X, icon.Background.Visual.Opacity);
+        return (icon.State, icon.Indicator.Visual.IsVisible, icon.Indicator.Geometry.Size.X, icon.Indicator.Fill.Color);
     }
 
     private sealed class StateAdornment : IDisposable
@@ -76,13 +75,12 @@ internal sealed class CompositionRenderer : IDisposable
 
     private sealed class IconVisual(SpriteVisual image, SpriteVisual reflection,
         CompositionDrawingSurface imageSurface, CompositionDrawingSurface reflectionSurface,
-        StateAdornment background, StateAdornment indicator) : IDisposable
+        StateAdornment indicator) : IDisposable
     {
         public SpriteVisual Image { get; } = image;
         public SpriteVisual Reflection { get; } = reflection;
         public SpringMotion X { get; } = new();
         public TimedTransition Press { get; } = new();
-        public StateAdornment Background { get; } = background;
         public StateAdornment Indicator { get; } = indicator;
         public TimedTransition Running { get; } = new();
         public TimedTransition Active { get; } = new();
@@ -91,7 +89,7 @@ internal sealed class CompositionRenderer : IDisposable
         {
             Image.Brush?.Dispose(); Reflection.Brush?.Dispose();
             Image.Dispose(); Reflection.Dispose(); imageSurface.Dispose(); reflectionSurface.Dispose();
-            Background.Dispose(); Indicator.Dispose();
+            Indicator.Dispose();
         }
     }
 
@@ -102,7 +100,6 @@ internal sealed class CompositionRenderer : IDisposable
         root = compositor.CreateContainerVisual();
         row = compositor.CreateContainerVisual();
         reflectionRow = compositor.CreateContainerVisual();
-        backgroundRow = compositor.CreateContainerVisual();
         indicatorRow = compositor.CreateContainerVisual();
         target.Root = root;
         try { d3d = D3D11.D3D11CreateDevice(DriverType.Hardware, DeviceCreationFlags.BgraSupport); HardwareRendering = true; }
@@ -118,7 +115,6 @@ internal sealed class CompositionRenderer : IDisposable
         outline.StrokeBrush = compositor.CreateColorBrush(WColor.FromArgb(160, 200, 222, 250));
         outline.FillBrush = compositor.CreateColorBrush(WColor.FromArgb(28, 225, 238, 255));
         placeholder.Shapes.Add(outline);
-        root.Children.InsertAtTop(backgroundRow);
         root.Children.InsertAtTop(reflectionRow);
         root.Children.InsertAtTop(placeholder);
         root.Children.InsertAtTop(row);
@@ -178,7 +174,7 @@ internal sealed class CompositionRenderer : IDisposable
     {
         row.Children.RemoveAll();
         reflectionRow.Children.RemoveAll();
-        backgroundRow.Children.RemoveAll(); indicatorRow.Children.RemoveAll();
+        indicatorRow.Children.RemoveAll();
         foreach (var icon in icons) icon.Dispose();
         icons.Clear();
     }
@@ -217,19 +213,18 @@ internal sealed class CompositionRenderer : IDisposable
     {
         var icon = CreateImage(pixels);
         (SpriteVisual Image, CompositionDrawingSurface Surface)? reflection = null;
-        StateAdornment? background = null, indicator = null;
+        StateAdornment? indicator = null;
         try
         {
             reflection = CreateImage(IconReflection.Create(pixels, IconService.Resolution));
-            background = new(compositor, WColor.FromArgb(245, 235, 244, 255), WColor.FromArgb(105, 255, 255, 255), .65f);
             indicator = new(compositor, WColor.FromArgb(245, 238, 243, 251), WColor.FromArgb(150, 25, 35, 48), .65f);
-            return new(icon.Image, reflection.Value.Image, icon.Surface, reflection.Value.Surface, background, indicator);
+            return new(icon.Image, reflection.Value.Image, icon.Surface, reflection.Value.Surface, indicator);
         }
         catch
         {
             icon.Image.Brush?.Dispose(); icon.Image.Dispose(); icon.Surface.Dispose();
             if (reflection is { } mirror) { mirror.Image.Brush?.Dispose(); mirror.Image.Dispose(); mirror.Surface.Dispose(); }
-            background?.Dispose(); indicator?.Dispose(); throw;
+            indicator?.Dispose(); throw;
         }
     }
 
@@ -263,7 +258,6 @@ internal sealed class CompositionRenderer : IDisposable
         {
             row.Children.InsertAtTop(icon.Image);
             reflectionRow.Children.InsertAtTop(icon.Reflection);
-            backgroundRow.Children.InsertAtTop(icon.Background.Visual);
             indicatorRow.Children.InsertAtTop(icon.Indicator.Visual);
         }
         var retained = next.ToHashSet();
@@ -287,7 +281,7 @@ internal sealed class CompositionRenderer : IDisposable
     private void DetachIcon(IconVisual icon)
     {
         row.Children.Remove(icon.Image); reflectionRow.Children.Remove(icon.Reflection);
-        backgroundRow.Children.Remove(icon.Background.Visual); indicatorRow.Children.Remove(icon.Indicator.Visual); icon.Dispose();
+        indicatorRow.Children.Remove(icon.Indicator.Visual); icon.Dispose();
     }
 
     public void Layout(DockGeometry geometry, float width, float height, float dpiScale,
@@ -296,7 +290,7 @@ internal sealed class CompositionRenderer : IDisposable
         root.Size = new(width, height);
         row.Size = root.Size;
         reflectionRow.Size = root.Size;
-        backgroundRow.Size = root.Size; indicatorRow.Size = root.Size;
+        indicatorRow.Size = root.Size;
         OrderingActive = false;
         PressFeedbackActive = false;
         StateAnimationActive = false;
@@ -332,17 +326,13 @@ internal sealed class CompositionRenderer : IDisposable
             reflection.Scale = new(icon.Scale.X, icon.Scale.Y * (float)IconReflection.Depth, 1);
             float running = (float)entry.Running.Sample(now), active = (float)entry.Active.Sample(now);
             StateAnimationActive |= entry.Running.Active || entry.Active.Active;
-            entry.Background.Visual.IsVisible = icon.IsVisible && running > .001f;
-            entry.Background.Visual.Opacity = running * (.07f + .23f * active);
-            entry.Background.SetBounds(icon.Offset - new Vector3(4 * dpiScale + 1, 4 * dpiScale + 1, 0),
-                new(feedbackSize + 8 * dpiScale), Math.Min(16 * dpiScale, feedbackSize * .23f));
             entry.Indicator.Visual.IsVisible = icon.IsVisible && running > .001f;
             entry.Indicator.Visual.Opacity = running;
             float markerWidth = (10f + 12f * active) * dpiScale;
             entry.Indicator.SetBounds(new((float)entry.X.Value * dpiScale + (actualSize - markerWidth) / 2 - 1,
                 (float)geometry.Baseline(height / dpiScale) * dpiScale + 7 * dpiScale - 1, 0),
                 new(markerWidth, 3.5f * dpiScale), 1.75f * dpiScale);
-            entry.Indicator.Fill.Color = WColor.FromArgb(245, 77, 170, 255);
+            entry.Indicator.Fill.Color = WColor.FromArgb(245, (byte)(255 - 178 * active), (byte)(255 - 85 * active), 255);
             if (i == hidden)
             {
                 placeholder.Size = new(actualSize + 4 * dpiScale);

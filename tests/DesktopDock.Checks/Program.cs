@@ -261,4 +261,9 @@ try
     Check(File.Exists(Path.Combine(desktopData, "Example.lnk")) && Directory.Exists(Path.Combine(desktopData, "Folder")), "Grouping leaves original desktop files untouched");
 }
 finally { if (Directory.Exists(featureData)) Directory.Delete(featureData, true); }
+var prefixed = DockLayout.Calculate(7, 48, 1.5, null, 1200);
+Check(DockReorder.Order(7, 1, 4, 5, start: 1).SequenceEqual([0, 2, 3, 4, 1, 5, 6]), "Reorder keeps launcher and settings fixed at either end");
+Check(DockReorder.Order(7, 0, 4, 5, start: 1).SequenceEqual(Enumerable.Range(0, 7)), "Launcher is excluded from movable range");
+Check(DockReorder.Target(prefixed, 5, 1, -100, start: 1) == 1 && DockReorder.Target(prefixed, 5, 1, 5000, start: 1) == 5, "Drag targets clamp to pinned entries");
+Check(DockReorder.Insertion(prefixed, 5, -100, start: 1) == 0 && DockReorder.Insertion(prefixed, 5, 5000, start: 1) == 5, "Drops return pinned indexes after the launcher");
 Console.WriteLine($"PASS: {checks} geometry, persistence and interaction checks.");
