@@ -17,7 +17,7 @@ internal static class Program
         string data = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "DesktopDock");
         int dataIndex = Array.IndexOf(args, "--data-dir");
         if (dataIndex >= 0 && dataIndex + 1 < args.Length) data = Path.GetFullPath(args[dataIndex + 1]);
-        bool preview = args.Contains("--preview") || args.Contains("--smoke-test") || args.Contains("--drag-test") || args.Contains("--click-hover-test");
+        bool preview = args.Contains("--preview") || args.Contains("--smoke-test") || args.Contains("--drag-test") || args.Contains("--click-hover-test") || args.Contains("--browser-window-test");
         Directory.CreateDirectory(data);
         if (args.Contains("--taskbar-guard")) return TaskbarRecovery.RunGuard(args, data);
         if (args.Contains("--taskbar-test")) return TaskbarChecks.Run(data);
@@ -91,6 +91,7 @@ internal static class Program
                 if (args.Contains("--smoke-test")) await controller.RunSmokeTest();
                 if (args.Contains("--drag-test")) await controller.RunDragTest(args.Contains("--hold-drag"));
                 if (args.Contains("--click-hover-test")) await controller.RunClickHoverTest();
+                if (args.Contains("--browser-window-test")) await controller.RunBrowserWindowTest();
             };
             return application.Run();
         }
@@ -98,7 +99,7 @@ internal static class Program
         {
             desktop.Restore();
             File.WriteAllText(Path.Combine(data, "last-error.txt"), e.ToString());
-            if (!args.Contains("--smoke-test") && !args.Contains("--click-hover-test")) System.Windows.MessageBox.Show("Dock 无法启动。桌面已尝试恢复。诊断信息保存在本机应用数据目录。", "Desktop Dock");
+            if (!args.Contains("--smoke-test") && !args.Contains("--click-hover-test") && !args.Contains("--browser-window-test")) System.Windows.MessageBox.Show("Dock 无法启动。桌面已尝试恢复。诊断信息保存在本机应用数据目录。", "Desktop Dock");
             return 1;
         }
         finally
@@ -248,6 +249,14 @@ internal sealed class Controller : IDisposable
             for (int i = 0; i < 60 && !File.Exists(Path.Combine(probeData, "ready.json")) && dock.LaunchWatcherActive; i++) await Task.Delay(50);
             if (File.Exists(Path.Combine(probeData, "ready.json"))) Native.PostMessage(RegressionProbe.Handle(probeData), 0x0010, 0, 0);
         }
+        Quit();
+    }
+
+    public async Task RunBrowserWindowTest()
+    {
+        dock.UseOcclusionWindowsForChecks(() => []);
+        var checks = await BrowserWindowChecks.Run(Path.Combine(data, "browser-checks"));
+        File.WriteAllText(Path.Combine(data, "browser-window-report.json"), JsonSerializer.Serialize(checks, new JsonSerializerOptions { WriteIndented = true }));
         Quit();
     }
 
@@ -443,6 +452,7 @@ internal sealed class Controller : IDisposable
                 Require(restoring && notMoved && activated, "Application regression: " + JsonSerializer.Serialize(new { Shortcut = shortcut, Restored = restoring, NoMove = notMoved, BackgroundActivated = activated, Action = dock.LastAppAction.ToString() }));
             }
 
+            var browserChecks = await BrowserWindowChecks.Run(Path.Combine(probeData, "pre-existing-browser"));
             await RegressionProbe.SetMode(anchor, probeData, "normal");
             dock.RefreshOcclusion(); await dock.WaitUntilShownForChecks();
             var dragChecks = await dock.CheckDragging(Path.Combine(data, "drag-checks"));
@@ -469,14 +479,14 @@ internal sealed class Controller : IDisposable
             await Task.Delay(5000); process.Refresh();
             var report = new
             {
-                Version = "0.1.0-preview.13", dock.HardwareRendering, dock.HostBackdrop, dock.IconCount,
+                Version = "0.1.0-preview.14", dock.HardwareRendering, dock.HostBackdrop, dock.IconCount,
                 BottomEdgeReveals = true, EdgeLeaveHides = recallTimedOut, HoverKeepsVisible = interactionResetTimeout,
                 ContextMenuStaysOpen = menuStaysOpen,
                 VisibilityMotionChecks = visibilityMotionChecks,
                 DockExcludedFromAltTab = dock.ExcludedFromAltTab, SettingsExcludedFromAltTab = settingsExcluded, NoTaskSwitchFlash = noImmediateFlash,
                 SettingsOpened = settingsOpened, SettingsMinimized = settingsMinimized, SettingsRestored = settingsRestored,
                 SettingsKeepsDockVisible = settingsKeepsDockVisible, OtherWindowStillHides = otherWindowStillHides,
-                ApplicationChecks = applicationChecks, ClickHoverChecks = clickHoverChecks, Avoidance = avoidance,
+                ApplicationChecks = applicationChecks, ClickHoverChecks = clickHoverChecks, BrowserChecks = browserChecks, Avoidance = avoidance,
                 DragChecks = dragChecks,
                 InputRegion = input, HoveredInputRegion = hoveredInput,
                 IdleCpuPercent = (process.TotalProcessorTime - initialCpu).TotalMilliseconds / watch.Elapsed.TotalMilliseconds / Environment.ProcessorCount * 100,

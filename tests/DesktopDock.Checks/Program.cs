@@ -108,6 +108,17 @@ Check(!clicks.Complete("other", 1.2, 13, 10, .5, 4, 4), "Clock reversal cannot a
 clicks.Reset();
 Check(!clicks.Complete("app", 3, 10, 10, .5, 4, 4) && clicks.Complete("app", 3.5, 12, 12, .5, 4, 4), "System double-click boundary is inclusive");
 var taskbar = new TaskbarVisibility();
+Check(!LaunchArguments.RequiresWindowBinding("chrome", ""), "Ordinary browser launch can reuse existing windows");
+foreach (string value in new[] { "desktop", "start-menu", "taskbar", "9", "\"desktop\"" })
+    Check(!LaunchArguments.RequiresWindowBinding("chrome", "--source-shortcut-location=" + value), "Shortcut launch metrics do not select a separate browser window");
+Check(!LaunchArguments.RequiresWindowBinding("CHROME", " --source-shortcut-location=desktop \t--source-shortcut-location=taskbar "), "Metadata-only arguments can be repeated and padded");
+Check(!LaunchArguments.RequiresWindowBinding("msedge", "--source-shortcut-location=desktop"), "Chromium browser launch metadata is non-specific");
+foreach (string arguments in new[] { "--source-shortcut-location=desktop https://example.invalid/", "--profile-directory=\"Example Profile\" --source-shortcut-location=desktop",
+    "--app-id=example", "--app=https://example.invalid/", "--incognito", "--new-window", "--user-data-dir=example", "example.html",
+    "--source-shortcut-location=", "--source-shortcut-location=\"desktop", "--source-shortcut-location=desktop --unknown" })
+    Check(LaunchArguments.RequiresWindowBinding("chrome", arguments), "Document, profile, app and unknown flags keep their original target semantics");
+Check(LaunchArguments.RequiresWindowBinding("example", "--source-shortcut-location=desktop"), "Browser-only metadata never changes another application's arguments");
+Check(LaunchArguments.RequiresWindowBinding(null, "--source-shortcut-location=desktop"), "Unresolved launch targets stay conservative");
 var taskbarMonitor = new WindowBounds(100, 200, 2020, 1280);
 var taskbarFrame = new WindowBounds(100, 200, 2020, 272);
 Check(TaskbarVisibility.AtTopEdge(taskbarMonitor, 100, 200), "Topmost physical pixel can reveal the taskbar");

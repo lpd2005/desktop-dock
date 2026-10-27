@@ -139,6 +139,8 @@ internal sealed class LaunchCoordinator : IDisposable
         if (pid == Environment.ProcessId) return false;
         if (expectedPid != 0 && pid == expectedPid) return true;
         if (info is null) return false;
+        if (LaunchArguments.IsChromiumBrowser(info.ProcessName) && info.ExecutablePath is not null
+            && !WindowClose.ExecutableMatches(hwnd, info.ExecutablePath)) return false;
         if (info.AppId is not null)
         {
             string? id = readAppId(hwnd);

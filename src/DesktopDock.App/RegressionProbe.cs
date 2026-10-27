@@ -91,17 +91,17 @@ internal static class RegressionProbe
             WriteShared(Path.Combine(data, "ready.json"), JsonSerializer.Serialize(new { Mode = appliedMode, Ready = true, WindowHandle = (long)new WindowInteropHelper(window).Handle }));
         };
         modeTimer.Start();
-        var timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(60) };
+        var timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(90) };
         timer.Tick += (_, _) => { timer.Stop(); modeTimer.Stop(); window.Close(); };
         timer.Start();
         return app.Run(window);
     }
 
-    public static Process Start(string mode, string data)
+    public static Process Start(string mode, string data, string? executable = null)
     {
         Directory.CreateDirectory(data);
-        var start = new ProcessStartInfo(Environment.ProcessPath!) { UseShellExecute = false, CreateNoWindow = true };
-        if (string.Equals(Path.GetFileNameWithoutExtension(Environment.ProcessPath), "dotnet", StringComparison.OrdinalIgnoreCase))
+        var start = new ProcessStartInfo(executable ?? Environment.ProcessPath!) { UseShellExecute = false, CreateNoWindow = true };
+        if (string.Equals(Path.GetFileNameWithoutExtension(start.FileName), "dotnet", StringComparison.OrdinalIgnoreCase))
             start.ArgumentList.Add(typeof(Program).Assembly.Location);
         start.ArgumentList.Add("--probe-window"); start.ArgumentList.Add(mode);
         start.ArgumentList.Add("--allow-foreground"); start.ArgumentList.Add(Environment.ProcessId.ToString());

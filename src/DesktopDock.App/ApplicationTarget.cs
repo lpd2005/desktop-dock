@@ -2,6 +2,7 @@ using System.IO;
 using System.Runtime.InteropServices;
 using Microsoft.Win32;
 using System.Text;
+using DesktopDock.Core;
 
 namespace DesktopDock.App;
 
@@ -12,7 +13,7 @@ internal sealed record ApplicationTarget(string? ProcessName, string? AppId, boo
     {
         string target = Environment.ExpandEnvironmentVariables(input), args = arguments;
         string? appId = null;
-        bool specific = !string.IsNullOrWhiteSpace(args);
+        bool specific = false;
         if (Path.GetExtension(target).Equals(".lnk", StringComparison.OrdinalIgnoreCase))
         {
             object? shell = null, shortcut = null, explorer = null, folder = null, item = null;
@@ -27,7 +28,6 @@ internal sealed record ApplicationTarget(string? ProcessName, string? AppId, boo
                 item = ((dynamic)folder!).ParseName(Path.GetFileName(target));
                 appId = ((dynamic)item!).ExtendedProperty("System.AppUserModel.ID") as string;
                 if (!string.IsNullOrWhiteSpace(resolved)) target = Environment.ExpandEnvironmentVariables(resolved);
-                specific |= !string.IsNullOrWhiteSpace(args);
             }
             catch (Exception e) when (e is COMException or ArgumentException or Microsoft.CSharp.RuntimeBinder.RuntimeBinderException) { }
             finally { Release(item); Release(folder); Release(explorer); Release(shortcut); Release(shell); }
@@ -45,7 +45,8 @@ internal sealed record ApplicationTarget(string? ProcessName, string? AppId, boo
             : target.StartsWith("ms-settings:", StringComparison.OrdinalIgnoreCase) ? "SystemSettings"
             : target.StartsWith("microsoft-edge:", StringComparison.OrdinalIgnoreCase) ? "msedge"
             : Directory.Exists(target) || target.StartsWith("shell:", StringComparison.OrdinalIgnoreCase) ? "explorer" : UriProcess(target);
-        specific |= Directory.Exists(target) || target.StartsWith("shell:", StringComparison.OrdinalIgnoreCase);
+        specific |= LaunchArguments.RequiresWindowBinding(process, args) || LaunchArguments.RequiresWindowBinding(process, arguments)
+            || Directory.Exists(target) || target.StartsWith("shell:", StringComparison.OrdinalIgnoreCase);
         // An AppsFolder argument identifies an application, not an argument-specific document window.
         if (shellApplication || !string.IsNullOrWhiteSpace(appId) && process is null) specific = false;
         return new(process, string.IsNullOrWhiteSpace(appId) ? null : appId, specific)
