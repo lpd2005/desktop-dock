@@ -1,4 +1,5 @@
 using System.Numerics;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using Windows.Graphics.DirectX;
 using Windows.UI.Composition;
@@ -28,12 +29,16 @@ internal sealed class CompositionRenderer : IDisposable
     private readonly ShapeVisual placeholder;
     private readonly CompositionRoundedRectangleGeometry placeholderGeometry;
     private bool disposed;
+    private bool reducedMotion;
+    private readonly Stopwatch feedbackTime = Stopwatch.StartNew();
 
     public bool HardwareRendering { get; }
     public bool HostBackdrop => false;
     public int IconCount => icons.Count;
     public bool OrderingActive { get; private set; }
+    public bool PressFeedbackActive { get; private set; }
     internal IReadOnlyList<object> IconIdentities => icons.Select(icon => (object)icon.Image).ToArray();
+    internal float ImageSizeForChecks(int index) => icons[index].Image.Scale.X * IconService.Resolution;
 
     private sealed class IconVisual(SpriteVisual image, SpriteVisual reflection,
         CompositionDrawingSurface imageSurface, CompositionDrawingSurface reflectionSurface) : IDisposable
@@ -41,6 +46,7 @@ internal sealed class CompositionRenderer : IDisposable
         public SpriteVisual Image { get; } = image;
         public SpriteVisual Reflection { get; } = reflection;
         public SpringMotion X { get; } = new();
+        public TimedTransition Press { get; } = new();
         public void Dispose()
         {
             Image.Brush?.Dispose(); Reflection.Brush?.Dispose();
@@ -79,6 +85,26 @@ internal sealed class CompositionRenderer : IDisposable
     {
         // The desktop itself is the background: no enclosing panel or border.
         reflectionRow.IsVisible = settings.Reflections;
+        reducedMotion = settings.ReducedMotion;
+        if (reducedMotion) ResetPressFeedback();
+    }
+
+    public void SetPressed(int index, bool down)
+    {
+        if (index < 0 || index >= icons.Count) return;
+        if (reducedMotion) icons[index].Press.Reset(0);
+        else icons[index].Press.Begin(down ? 1 : 0, feedbackTime.Elapsed.TotalSeconds, down ? .07 : .14);
+    }
+
+    public void ReleasePressFeedback()
+    {
+        for (int i = 0; i < icons.Count; i++) SetPressed(i, false);
+    }
+
+    public void ResetPressFeedback()
+    {
+        foreach (var icon in icons) icon.Press.Reset(0);
+        PressFeedbackActive = false;
     }
 
     private void ClearIcons()
@@ -186,6 +212,8 @@ internal sealed class CompositionRenderer : IDisposable
         row.Size = root.Size;
         reflectionRow.Size = root.Size;
         OrderingActive = false;
+        PressFeedbackActive = false;
+        double now = feedbackTime.Elapsed.TotalSeconds;
         placeholder.IsVisible = hidden >= 0;
         insertion.IsVisible = insertBefore >= 0;
         if (insertBefore >= 0)
@@ -201,13 +229,16 @@ internal sealed class CompositionRenderer : IDisposable
             var slot = geometry.Slots[positionIndex];
             float actualSize = (float)slot.Size * dpiScale;
             var entry = icons[i];
+            float feedbackSize = actualSize * (1 - .06f * (float)entry.Press.Sample(now));
+            PressFeedbackActive |= entry.Press.Active;
             var icon = entry.Image;
             if (!animateOrder) entry.X.Reset(slot.X);
             else if (dt > 0) OrderingActive |= entry.X.Step(slot.X, dt, 38);
             else OrderingActive |= Math.Abs(entry.X.Value - slot.X) > .01;
             icon.IsVisible = i != hidden;
-            icon.Offset = new((float)entry.X.Value * dpiScale, (float)geometry.Baseline(height / dpiScale) * dpiScale - actualSize, 0);
-            icon.Scale = new(actualSize / IconService.Resolution, actualSize / IconService.Resolution, 1);
+            icon.Offset = new((float)entry.X.Value * dpiScale + (actualSize - feedbackSize) / 2,
+                (float)geometry.Baseline(height / dpiScale) * dpiScale - feedbackSize, 0);
+            icon.Scale = new(feedbackSize / IconService.Resolution, feedbackSize / IconService.Resolution, 1);
             var reflection = entry.Reflection;
             reflection.IsVisible = icon.IsVisible;
             reflection.Offset = new(icon.Offset.X, (float)geometry.Baseline(height / dpiScale) * dpiScale + 2 * dpiScale, 0);

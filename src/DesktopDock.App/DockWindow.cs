@@ -48,6 +48,7 @@ internal sealed class DockWindow : IDisposable
     private Native.Point lastMouse;
     private bool syntheticHover;
     private double pointerTarget, lastFrame;
+    private double? pointerTargetForChecks;
     private int pressedIndex = -1, hoveredIndex = -1, loadGeneration;
     private int interactionVersion;
     private bool startingDrag;
@@ -200,7 +201,7 @@ internal sealed class DockWindow : IDisposable
         top = screen.WorkingArea.Bottom - height - (int)(settings.BottomGap * scale);
         autoHidden = false;
         occlusionDirty = true;
-        hover.Reset(0);
+        hover.Reset(0); renderer.ResetPressFeedback();
         motion.SetBounds(left, top, width, height, scale);
         RenderLayout();
         CheckVisibility();
@@ -239,12 +240,12 @@ internal sealed class DockWindow : IDisposable
         if (dt < .001) return;
         lastFrame = now;
         TrackPressedPointer();
-        bool present = (syntheticHover || IsPointerOverDock()) && pressedIndex < 0 && !dragging && !returning && !externalDrop && !shellDrag.Active && !suppressHover;
-        bool active = pointer.Step(pointerTarget, dt, 100);
+        bool present = (syntheticHover || IsPointerOverDock()) && !dragging && !returning && !externalDrop && !shellDrag.Active && !suppressHover;
+        bool active = pointer.Step(pointerTargetForChecks ?? pointerTarget, dt, 100);
         active |= hover.Step(present ? 1 : 0, dt, present ? 36 : 29);
         if (settings.ReducedMotion) { pointer.Reset(pointerTarget); hover.Reset(present ? 1 : 0); active = false; }
         RenderLayout(dt);
-        active |= renderer.OrderingActive;
+        active |= renderer.OrderingActive || renderer.PressFeedbackActive;
         if (sortingSettles && !renderer.OrderingActive) sortingSettles = false;
         active |= UpdateGhost(now);
         active |= pressedIndex >= 0 || dragging;
@@ -283,7 +284,8 @@ internal sealed class DockWindow : IDisposable
                 Native.ReleaseCapture();
             }
         }
-        else if (!down && !IsPointerOverDock()) { interactionVersion++; pressedIndex = -1; pressedForeground = null; Native.ReleaseCapture(); }
+        else if (!down && !IsPointerOverDock())
+        { renderer.SetPressed(pressedIndex, false); interactionVersion++; pressedIndex = -1; pressedForeground = null; Native.ReleaseCapture(); }
     }
 
     private nint Message(nint hwnd, int msg, nint wparam, nint lparam, ref bool handled)
@@ -348,6 +350,7 @@ internal sealed class DockWindow : IDisposable
                 pressedIndex = HitIndex(x, y); pressedPoint = new() { X = x, Y = y };
                 if (pressedIndex >= 0)
                 {
+                    renderer.SetPressed(pressedIndex, true);
                     var slot = geometry.Slots[pressedIndex];
                     gripX = Math.Clamp((x / scale - slot.X) / slot.Size, 0, 1);
                     gripY = Math.Clamp((y / scale - (geometry.Baseline(height / scale) - slot.Size)) / slot.Size, 0, 1);
@@ -359,6 +362,7 @@ internal sealed class DockWindow : IDisposable
                 NoteInteraction();
                 interactionVersion++;
                 int pressed = pressedIndex;
+                renderer.SetPressed(pressed, false);
                 nint? clickForeground = pressedForeground;
                 pressedForeground = null;
                 bool wasDragging = dragging;
@@ -367,7 +371,7 @@ internal sealed class DockWindow : IDisposable
                     DockReorder.RemoveOnRelease(RestGeometry, width / scale, height / scale, x / scale, y / scale));
                 Native.ReleaseCapture();
                 bool moved = DockReorder.Moved((x - pressedPoint.X) / scale, (y - pressedPoint.Y) / scale);
-                suppressHover = true;
+                suppressHover = wasDragging || moved;
                 if (!wasDragging && pressed >= 0 && pressed < entries.Count && !moved)
                 {
                     var clicked = entries[pressed];
@@ -420,7 +424,7 @@ internal sealed class DockWindow : IDisposable
     private void ShowMenu(int index)
     {
         if (menuOpen || disposed) return;
-        label.IsOpen = false; labelTimer.Stop(); hover.Reset(0); StopRendering(); RenderLayout();
+        label.IsOpen = false; labelTimer.Stop(); hover.Reset(0); renderer.ResetPressFeedback(); StopRendering(); RenderLayout();
         nint menu = Native.CreatePopupMenu();
         if (menu == 0) return;
         var actions = new Dictionary<uint, Action>();
@@ -490,7 +494,7 @@ internal sealed class DockWindow : IDisposable
         if (shellDragging)
         {
             labelTimer.Stop(); label.IsOpen = false; suppressHover = true;
-            if (!wasShellDragging) { hover.Reset(0); RenderLayout(); }
+            if (!wasShellDragging) { hover.Reset(0); renderer.ResetPressFeedback(); RenderLayout(); }
         }
         if (occlusionDirty || now - lastOcclusionScan >= 1)
         {
@@ -516,7 +520,7 @@ internal sealed class DockWindow : IDisposable
             autoHidden = !blocked;
             if (wasTarget)
             {
-                StopRendering(); hover.Reset(0); label.IsOpen = false;
+                StopRendering(); hover.Reset(0); renderer.ResetPressFeedback(); label.IsOpen = false;
                 hideTransitions++;
             }
             motion.Request(false, switching || settings.ReducedMotion);
@@ -579,7 +583,7 @@ internal sealed class DockWindow : IDisposable
             if (!Current()) return;
             ghost = prepared; prepared = null; ghostMargin = image.Margin;
             dragging = true; dragFrom = dragTo = ghostIndex = index;
-            hover.Reset(0); suppressHover = true;
+            hover.Reset(0); renderer.ResetPressFeedback(); suppressHover = true;
             StartRendering();
         }
         finally { prepared?.Dispose(); startingDrag = false; }
@@ -650,6 +654,7 @@ internal sealed class DockWindow : IDisposable
     }
     private void CancelInteraction()
     {
+        renderer.ReleasePressFeedback();
         clicks.Reset();
         interactionVersion++;
         pressedIndex = -1;
@@ -664,7 +669,7 @@ internal sealed class DockWindow : IDisposable
         NoteInteraction();
         Native.ScreenToClient(Handle, ref point);
         externalDrop = allowed; insertion = allowed ? DockReorder.Insertion(RestGeometry, settings.Items.Count, point.X / scale) : -1;
-        hover.Reset(0); suppressHover = true; labelTimer.Stop(); label.IsOpen = false;
+        hover.Reset(0); renderer.ResetPressFeedback(); suppressHover = true; labelTimer.Stop(); label.IsOpen = false;
         RenderLayout(); CheckVisibility();
     }
     private int AddDroppedFiles(IReadOnlyList<string> paths, Native.Point point)
@@ -734,6 +739,87 @@ internal sealed class DockWindow : IDisposable
             await Task.Delay(20);
         }
         throw new TimeoutException("Dock did not finish revealing.");
+    }
+
+    internal async Task<Dictionary<string, bool>> DoubleClickHoveredForCheck(DockItem item)
+    {
+        var checks = new Dictionary<string, bool>();
+        void Require(bool value, string name)
+        {
+            checks[name] = value;
+            if (!value) throw new InvalidOperationException("Hovered click regression: " + name);
+        }
+        bool previousInteraction = checkingInteraction, previousSynthetic = syntheticHover;
+        bool? previousOver = pointerOverForChecks;
+        bool previousSuppression = suppressHover;
+        double? previousPointer = pointerTargetForChecks;
+        try
+        {
+            checkingInteraction = true; pointerOverForChecks = true; syntheticHover = false; suppressHover = false;
+            clicks.Reset();
+            Summon(); await WaitUntilShownForChecks();
+            int index = entries.IndexOf(item);
+            if (index < 0) throw new InvalidOperationException("Missing hovered-click test entry.");
+            var rest = RestGeometry;
+            pointerTarget = rest.Slots[index].X + rest.Slots[index].Size / 2;
+            pointerTargetForChecks = pointerTarget;
+            if (hover.Value < .01) pointer.Reset(pointerTarget);
+            StartRendering();
+            for (int i = 0; i < 60 && rendering; i++) await Task.Delay(20);
+            var original = geometry.Slots.ToArray();
+            Require(original[index].Size > rest.IconSize * 1.05, "InitiallyMagnified");
+            Require(!rendering, "HoveredRestStopsClock");
+            var slot = original[index];
+            int x = (int)Math.Round((slot.X + slot.Size / 2) * scale);
+            int y = (int)Math.Round((geometry.Baseline(height / scale) - slot.Size / 2) * scale);
+            nint point = new((y & 0xffff) << 16 | x & 0xffff);
+            int sampleMs = Math.Clamp((int)Native.GetDoubleClickTime() / 8, 12, 50);
+            async Task Sample(string name, int? milliseconds = null)
+            {
+                double until = clock.Elapsed.TotalMilliseconds + (milliseconds ?? sampleMs);
+                bool stable = true;
+                do
+                {
+                    await Task.Delay(8);
+                    stable &= geometry.Slots.Length == original.Length && geometry.Slots.Zip(original).All(pair =>
+                        Math.Abs(pair.First.X - pair.Second.X) < .25 && Math.Abs(pair.First.Size - pair.Second.Size) < .25);
+                } while (clock.Elapsed.TotalMilliseconds < until);
+                Require(stable, name);
+            }
+            Native.SendMessage(Handle, 0x0201, 1, point);
+            await Sample("FirstPressKeepsGeometry");
+            double hoveredSize = original[index].Size * scale;
+            float firstPressedSize = renderer.ImageSizeForChecks(index);
+            Require(firstPressedSize < hoveredSize * .995 && firstPressedSize > hoveredSize * .9, "FirstPressHasScaleFeedback");
+            int neighbor = index > 0 ? index - 1 : index + 1;
+            Require(Math.Abs(renderer.ImageSizeForChecks(neighbor) - original[neighbor].Size * scale) < .25, "NeighborKeepsVisualSize");
+            Native.SendMessage(Handle, 0x0202, 0, point);
+            Require(launcher.LastAction == AppClickAction.Ignore && !launcher.IsWatching, "FirstReleaseDoesNotLaunch");
+            await Sample("BetweenClicksKeepsGeometry");
+            Require(renderer.ImageSizeForChecks(index) > firstPressedSize + .1, "FirstReleaseReturnsTowardHoverSize");
+            Native.SendMessage(Handle, 0x0203, 1, point);
+            await Sample("SecondPressKeepsGeometry");
+            Require(renderer.ImageSizeForChecks(index) < hoveredSize * .995, "SecondPressHasScaleFeedback");
+            Native.SendMessage(Handle, 0x0202, 0, point);
+            Require(launcher.LastAction == AppClickAction.Launch && launcher.IsWatching, "SecondReleaseLaunches");
+            await Sample("SecondReleaseKeepsGeometry", 220);
+            Require(Math.Abs(renderer.ImageSizeForChecks(index) - hoveredSize) < .25, "ReleaseRestoresHoveredSize");
+            Require(!rendering, "ReleasedHoverStopsClock");
+            renderer.SetTheme(new DockSettings { Reflections = settings.Reflections, ReducedMotion = true });
+            renderer.SetPressed(index, true); RenderLayout();
+            Require(Math.Abs(renderer.ImageSizeForChecks(index) - hoveredSize) < .25 && !renderer.PressFeedbackActive,
+                "ReducedMotionSkipsPressFeedback");
+            renderer.SetPressed(index, false);
+        }
+        finally
+        {
+            if (pressedIndex >= 0) CancelInteraction();
+            checkingInteraction = previousInteraction; pointerOverForChecks = previousOver;
+            syntheticHover = previousSynthetic; suppressHover = previousSuppression; StartRendering();
+            pointerTargetForChecks = previousPointer;
+            renderer.SetTheme(settings);
+        }
+        return checks;
     }
 
     internal async Task<Dictionary<string, bool>> CheckVisibilityMotion()
@@ -885,7 +971,7 @@ internal sealed class DockWindow : IDisposable
             var first = geometry.Slots[0];
             Mouse(0x0201, first.X + first.Size / 2, geometry.Baseline(height / scale) - first.Size / 2);
             await Task.Delay(260);
-            Require(hover.Value < .01, "HeldIconStopsMagnifying");
+            Require(hover.Value > .99 && geometry.Slots[0].Size >= first.Size - .1, "HeldIconKeepsHoverBeforeDrag");
             var rest = RestGeometry;
             double x = rest.Slots[2].X + rest.Slots[2].Size / 2 + 2, y = rest.Baseline(height / scale) - rest.IconSize / 2;
             int generation = loadGeneration;
