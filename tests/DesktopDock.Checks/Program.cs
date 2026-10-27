@@ -208,4 +208,57 @@ foreach (double iconSize in new[] { 32d, 48, 80 })
     Check(reflectedGeometry.Baseline(250) + 2 + reflectedGeometry.Slots.Max(x => x.Size) * IconReflection.Depth <= 250 - DockGeometry.Foot + .01, "Reflections fit below the shared baseline");
 }
 Check(System.Text.Json.JsonSerializer.Deserialize<DockSettings>("{}")!.Reflections, "Existing settings default to reflections");
+var featureSettings = System.Text.Json.JsonSerializer.Deserialize<DockSettings>("{}")!;
+Check(featureSettings.Widgets.Clock && featureSettings.Widgets.Calendar && featureSettings.Widgets.Weather && featureSettings.Widgets.Light,
+    "Existing settings gain light desktop widgets");
+var firstGroup = new DesktopGroup { Name = "Work", Targets = ["Example.lnk", "example.lnk"] };
+var secondGroup = new DesktopGroup { Name = "Play" };
+var groups = DesktopLibrary.NormalizeGroups([firstGroup, secondGroup, new() { Id = "invalid" }]);
+Check(groups.Count == 2 && groups[0].Targets.Count == 1, "Groups validate identifiers and deduplicate targets");
+DockItem[] library = [new("Example", "Example.lnk"), new("Other", "Other.lnk"), new("Notes", "Notes.txt")];
+Check(DesktopLibrary.Filter(library, groups, firstGroup.Id, "EXAM").Length == 1, "Group search is case independent");
+Check(DesktopLibrary.Filter(library, groups, "ungrouped", "").Length == 2, "Ungrouped excludes grouped entries");
+DesktopLibrary.Assign(groups, "Example.lnk", secondGroup.Id);
+Check(firstGroup.Targets.Count == 0 && secondGroup.Targets.SequenceEqual(["Example.lnk"]), "Assign moves virtual membership without duplicate groups");
+DesktopLibrary.Assign(groups, "Example.lnk", null);
+Check(DesktopLibrary.Filter(library, groups, "ungrouped", "").Length == 3, "Ungroup preserves the desktop entry");
+var positions = new WidgetOptions { City = "   ", Positions = new() { ["clock"] = new(-5, 90000), ["calendar"] = new(double.NaN, 2), ["unknown"] = new(1, 2) } };
+positions.Normalize();
+Check(positions.City.Length > 0 && positions.Positions.Count == 1 && positions.Positions["clock"] == new WidgetPosition(0, 20000), "Widget positions and city normalize safely");
+foreach (int year in new[] { 1900, 2000, 2024, 2026, 2028, 2100 })
+foreach (int monthNumber in Enumerable.Range(1, 12))
+{
+    var days = CalendarMonth.Days(new(year, monthNumber, 15));
+    Check(days.Length == 42 && days[0].DayOfWeek == DayOfWeek.Monday, "Calendar starts Monday and includes six weeks");
+    Check(days.Count(x => x.Month == monthNumber && x.Year == year) == DateTime.DaysInMonth(year, monthNumber), "Calendar includes every day including leap boundaries");
+    Check(days.Zip(days.Skip(1)).All(x => x.First.AddDays(1) == x.Second), "Calendar days remain contiguous across year boundaries");
+}
+const string weatherFixture = """
+{"current":{"temperature_2m":18.4,"apparent_temperature":17.1,"relative_humidity_2m":54,"wind_speed_10m":8.2,"weather_code":2,"is_day":1},"daily":{"temperature_2m_max":[23.1],"temperature_2m_min":[12.5]}}
+""";
+var weather = WeatherSnapshot.Parse("Example City", weatherFixture, DateTimeOffset.UnixEpoch);
+Check(weather.Temperature == 18.4 && weather.Humidity == 54 && weather.Low == 12.5 && weather.Description == "晴间多云", "Weather parses real API field names and units");
+Check((weather with { Code = 0, IsDay = false }).Description == "晴朗夜空", "Weather distinguishes night from day");
+Check((weather with { Code = 95 }).Description == "雷雨" && (weather with { Code = 73 }).Description == "雪", "Weather codes map to conditions");
+try { WeatherSnapshot.Parse("Example City", weatherFixture.Replace(":54", ":154"), DateTimeOffset.UnixEpoch); Check(false, "Invalid weather must be rejected"); }
+catch (System.Text.Json.JsonException) { Check(true, "Invalid weather is rejected without a fake value"); }
+string featureData = Path.Combine(Path.GetTempPath(), "DesktopDock-features-" + Guid.NewGuid().ToString("N"));
+try
+{
+    Directory.CreateDirectory(featureData); string desktopData = Path.Combine(featureData, "desktop"); Directory.CreateDirectory(desktopData);
+    File.WriteAllText(Path.Combine(desktopData, "Example.lnk"), "fixture"); File.WriteAllText(Path.Combine(desktopData, "Notes.txt"), "fixture");
+    File.WriteAllText(Path.Combine(desktopData, "desktop.ini"), "fixture"); File.SetAttributes(Path.Combine(desktopData, "desktop.ini"), FileAttributes.Hidden);
+    Directory.CreateDirectory(Path.Combine(desktopData, "Folder"));
+    var entries = DesktopLibrary.Read([desktopData, desktopData, Path.Combine(featureData, "missing")]);
+    Check(entries.Length == 3 && entries.Any(x => x.Name == "Example") && entries.Any(x => x.Name == "Notes.txt"), "Desktop catalog preserves files, folders and shortcut labels");
+    Check(!entries.Any(x => x.Name == "desktop.ini"), "Desktop catalog excludes hidden system metadata");
+    DesktopLibrary.Assign(groups, entries[0].Target, firstGroup.Id);
+    string persisted = Path.Combine(featureData, "settings.json");
+    SettingsStore.Save(persisted, new DockSettings { DesktopGroups = groups, Widgets = positions });
+    var restoredFeatures = SettingsStore.Load(persisted);
+    Check(restoredFeatures.DesktopGroups[0].Targets.Contains(entries[0].Target) && restoredFeatures.Widgets.Positions["clock"].X == 0,
+        "Virtual groups and widget positions persist across restarts");
+    Check(File.Exists(Path.Combine(desktopData, "Example.lnk")) && Directory.Exists(Path.Combine(desktopData, "Folder")), "Grouping leaves original desktop files untouched");
+}
+finally { if (Directory.Exists(featureData)) Directory.Delete(featureData, true); }
 Console.WriteLine($"PASS: {checks} geometry, persistence and interaction checks.");

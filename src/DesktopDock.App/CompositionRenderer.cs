@@ -338,11 +338,11 @@ internal sealed class CompositionRenderer : IDisposable
                 new(feedbackSize + 8 * dpiScale), Math.Min(16 * dpiScale, feedbackSize * .23f));
             entry.Indicator.Visual.IsVisible = icon.IsVisible && running > .001f;
             entry.Indicator.Visual.Opacity = running;
-            float markerWidth = (3.5f + 10.5f * active) * dpiScale;
+            float markerWidth = (10f + 12f * active) * dpiScale;
             entry.Indicator.SetBounds(new((float)entry.X.Value * dpiScale + (actualSize - markerWidth) / 2 - 1,
                 (float)geometry.Baseline(height / dpiScale) * dpiScale + 7 * dpiScale - 1, 0),
                 new(markerWidth, 3.5f * dpiScale), 1.75f * dpiScale);
-            entry.Indicator.Fill.Color = WColor.FromArgb(245, (byte)(238 - 161 * active), (byte)(243 - 73 * active), (byte)(251 + 4 * active));
+            entry.Indicator.Fill.Color = WColor.FromArgb(245, 77, 170, 255);
             if (i == hidden)
             {
                 placeholder.Size = new(actualSize + 4 * dpiScale);

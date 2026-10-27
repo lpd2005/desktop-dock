@@ -41,6 +41,7 @@ internal static class IconService
                     var source = Imaging.CreateBitmapSourceFromHIcon(icon, Int32Rect.Empty, BitmapSizeOptions.FromEmptyOptions());
                     dc.DrawImage(source, new Rect(0, 0, Resolution, Resolution));
                 }
+                else if (item.Target == "dock:settings") dc.DrawImage(AppBrand.Image(), new Rect(0, 0, Resolution, Resolution));
                 else
                 {
                     DrawFallback(dc, item.Target);
@@ -87,6 +88,14 @@ internal static class IconService
 
     private static void DrawFallback(DrawingContext dc, string target)
     {
+        if (target == "dock:apps")
+        {
+            var fill = new LinearGradientBrush(Color.FromRgb(214, 235, 255), Color.FromRgb(104, 162, 239), 90);
+            var pen = new Pen(new SolidColorBrush(Color.FromArgb(155, 255, 255, 255)), 1.2);
+            for (int y = 0; y < 3; y++) for (int x = 0; x < 3; x++)
+                dc.DrawRoundedRectangle(fill, pen, new Rect(9 + x * 39, 9 + y * 39, 30, 30), 8, 8);
+            return;
+        }
         bool preferences = target is "dock:settings" or "ms-settings:";
         bool bin = target == "shell:RecycleBinFolder";
         Color top = preferences ? Color.FromRgb(177, 193, 216) : bin ? Color.FromRgb(105, 211, 177) : Color.FromRgb(80, 183, 250);
@@ -95,6 +104,12 @@ internal static class IconService
             FlowDirection.LeftToRight, new Typeface("Segoe MDL2 Assets"), 104,
             new LinearGradientBrush(top, bottom, 90), 1);
         dc.DrawText(text, new System.Windows.Point((128 - text.Width) / 2, (124 - text.Height) / 2));
+    }
+
+    internal static BitmapSource Bitmap(byte[] pixels)
+    {
+        var bitmap = BitmapSource.Create(Resolution, Resolution, 96, 96, PixelFormats.Pbgra32, null, pixels, Resolution * 4);
+        bitmap.Freeze(); return bitmap;
     }
 
     private static unsafe nint GetListIcon(nint list, int index)

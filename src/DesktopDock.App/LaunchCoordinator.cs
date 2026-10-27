@@ -203,7 +203,7 @@ internal sealed class LaunchCoordinator : IDisposable
             string? id = snapshot is null ? readAppId(hwnd) : snapshot.AppId(hwnd);
             if (!string.IsNullOrEmpty(id)) return info.AppId.Equals(id, StringComparison.OrdinalIgnoreCase);
             // Never fall back to the shell's process name for an app activation shortcut.
-            if (info.ProcessName == "explorer" || info.AppId.Contains('!')) return false;
+            if (info.ProcessName == "explorer" || info.AppId.Contains('!') && info.AppId != ApplicationTarget.WindowsSettingsId) return false;
         }
         if (info.ProcessName is null) return false;
         return info.ProcessName.Equals(snapshot is null ? ProcessValue(pid, false) : snapshot.Name(pid), StringComparison.OrdinalIgnoreCase);

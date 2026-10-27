@@ -10,11 +10,14 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <AssemblyName>DesktopDock</AssemblyName>
     <StartupObject>DesktopDock.App.Program</StartupObject>
+    <ApplicationIcon>Assets/Brand.ico</ApplicationIcon>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <PublishReadyToRun>false</PublishReadyToRun>
     <PublishSingleFile>false</PublishSingleFile>
   </PropertyGroup>
   <ItemGroup>
+    <Resource Include="Assets/Brand.png" />
+    <Resource Include="Assets/Brand.ico" />
     <ProjectReference Include="../DesktopDock.Core/DesktopDock.Core.csproj" />
     <PackageReference Include="Vortice.Direct3D11" Version="3.8.3" />
     <PackageReference Include="Vortice.Direct2D1" Version="3.8.3" />

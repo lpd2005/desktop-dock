@@ -21,6 +21,9 @@ internal sealed class DockWindow : IDisposable
     private readonly Action openSettings, changed, recover, quit;
     private readonly Action<nint?> toggleSettings;
     private readonly Func<nint> settingsHandle;
+    private readonly Action toggleApplications;
+    private readonly Func<nint> applicationsHandle;
+    private readonly Func<bool> applicationsOpen;
     private readonly LaunchCoordinator launcher;
     private readonly WindowOcclusion occlusion;
     private readonly DockDropTarget dropTarget;
@@ -102,12 +105,16 @@ internal sealed class DockWindow : IDisposable
     });
 
     public DockWindow(DockSettings settings, Action openSettings, Action changed, Action recover, Action quit,
-        Action<nint?>? toggleSettings = null, Func<nint>? settingsHandle = null)
+        Action<nint?>? toggleSettings = null, Func<nint>? settingsHandle = null, Action? toggleApplications = null,
+        Func<nint>? applicationsHandle = null, Func<bool>? applicationsOpen = null)
     {
         this.settings = settings; this.openSettings = openSettings; this.changed = changed;
         this.recover = recover; this.quit = quit;
         this.toggleSettings = toggleSettings ?? (_ => openSettings());
         this.settingsHandle = settingsHandle ?? (() => 0);
+        this.toggleApplications = toggleApplications ?? (() => { });
+        this.applicationsHandle = applicationsHandle ?? (() => 0);
+        this.applicationsOpen = applicationsOpen ?? (() => false);
         launcher = new();
         source = new HwndSource(new HwndSourceParameters("Desktop Dock")
         {
@@ -170,7 +177,7 @@ internal sealed class DockWindow : IDisposable
     public async Task LoadIcons(bool fromDrop = false)
     {
         int generation = ++loadGeneration;
-        var localEntries = settings.Items.Append(new DockItem("Dock 设置", "dock:settings")).ToArray();
+        var localEntries = settings.Items.Concat([new DockItem("Dock 设置", "dock:settings"), new DockItem("桌面应用", "dock:apps")]).ToArray();
         if (fromDrop || pendingDropGeneration != 0)
         {
             pendingDropGeneration = generation;
@@ -434,6 +441,7 @@ internal sealed class DockWindow : IDisposable
     {
         NoteInteraction();
         if (item.Target == "dock:settings") { if (toggle) toggleSettings(foregroundAtPress); else openSettings(); return; }
+        if (item.Target == "dock:apps") { toggleApplications(); return; }
         try
         {
             launcher.Launch(item, toggle, foregroundAtPress, allowLaunch);
@@ -454,7 +462,7 @@ internal sealed class DockWindow : IDisposable
             uint id = (uint)actions.Count + 1; actions[id] = action;
             Native.AppendMenu(menu, enabled ? 0u : 3u, id, title);
         }
-        if (index >= 0 && index < entries.Count - 1)
+        if (index >= 0 && index < settings.Items.Count)
         {
             foreach (var itemAction in ItemMenuActions(entries[index])) Add(itemAction.Title, itemAction.Invoke, itemAction.Enabled);
             Native.AppendMenu(menu, 0x800, 0, null);
@@ -528,7 +536,7 @@ internal sealed class DockWindow : IDisposable
         var screen = Forms.Screen.PrimaryScreen!.Bounds;
         Native.GetCursorPos(out var cursor);
         bool atEdge = bottomEdgeForChecks ?? (cursor.X >= screen.Left && cursor.X < screen.Right && cursor.Y >= screen.Bottom - 2 && cursor.Y < screen.Bottom);
-        bool interacting = pressedIndex >= 0 || dragging || returning || externalDrop || shellDragging || finishingDrop || menuOpen;
+        bool interacting = pressedIndex >= 0 || dragging || returning || externalDrop || shellDragging || finishingDrop || menuOpen || applicationsOpen();
         bool overPresented = motion.Progress > 0 && IsPointerOverDock();
         if (motion.Active && !motion.Target && overPresented && !switching) visibility.Summon(now);
         bool show = visibility.ShouldShow(cachedOccluded, switching, now, settings.AutoHide, atEdge,
@@ -561,6 +569,10 @@ internal sealed class DockWindow : IDisposable
         int index = entries.FindIndex(x => x.Target == "dock:settings");
         if (index >= 0 && settingsWindow != 0 && Native.IsWindow(settingsWindow))
             states[index] = new(true, settingsWindow == foreground && !Native.IsIconic(settingsWindow));
+        nint panel = applicationsHandle();
+        int panelIndex = entries.FindIndex(x => x.Target == "dock:apps");
+        if (panelIndex >= 0 && applicationsOpen() && panel != 0 && Native.IsWindowVisible(panel))
+            states[panelIndex] = new(true, panel == foreground);
         return states;
     }
 
@@ -750,6 +762,7 @@ internal sealed class DockWindow : IDisposable
     public void ClearFrameSamples() => frameIntervals.Clear();
 
     internal void InvokeSettingsEntry() => Launch(new("Dock 设置", "dock:settings"));
+    internal void OpenFromPanel(DockItem item) => Launch(item, toggle: false, allowLaunch: true);
     internal void LaunchForCheck(DockItem item) => Launch(item);
     internal async Task PinForCheck(DockItem item)
     {
@@ -784,14 +797,14 @@ internal sealed class DockWindow : IDisposable
             var identities = renderer.IconIdentities.ToArray();
             states[0] = new(true, false); Present(); await Task.Delay(230);
             var running = renderer.StateForChecks(0);
-            Require(running.Visible && Math.Abs(running.Width / scale - 3.5) < .01, "RunningUsesSmallDot");
+            Require(running.Visible && Math.Abs(running.Width / scale - 10) < .01, "RunningUsesShortBlueLine");
             Require(running.BackgroundOpacity > .06f && running.BackgroundOpacity < .08f, "RunningHasSubtleBackground");
             states[0] = new(true, true); Present(); await Task.Delay(55);
             var middle = renderer.StateForChecks(0);
-            Require(middle.Width > running.Width && middle.Width < 14 * scale && renderer.StateAnimationActive, "ActiveMarkerTransitionsSmoothly");
+            Require(middle.Width > running.Width && middle.Width < 22 * scale && renderer.StateAnimationActive, "ActiveMarkerTransitionsSmoothly");
             await Task.Delay(230);
             var active = renderer.StateForChecks(0);
-            Require(Math.Abs(active.Width / scale - 14) < .01 && active.BackgroundOpacity > .29, "ActiveUsesPillAndStrongerBackground");
+            Require(Math.Abs(active.Width / scale - 22) < .01 && active.BackgroundOpacity > .29, "ActiveUsesPillAndStrongerBackground");
             Require(!renderer.StateAnimationActive && !rendering, "SettledStateStopsAnimationClock");
             Require(renderer.IconIdentities.SequenceEqual(identities), "StatusDoesNotRecreateIconSurfaces");
             renderer.Layout(geometry, width, height, scale, hidden: 0);
@@ -806,7 +819,7 @@ internal sealed class DockWindow : IDisposable
             Require(renderer.StateForChecks(0).Visible && renderer.StateForChecks(0).Width < active.Width, "InactiveRetainsRunningMarker");
             renderer.SetTheme(new DockSettings { Reflections = settings.Reflections, ReducedMotion = true });
             states[0] = new(true, true); Present();
-            Require(!renderer.StateAnimationActive && Math.Abs(renderer.StateForChecks(0).Width / scale - 14) < .01, "ReducedMotionChangesImmediately");
+            Require(!renderer.StateAnimationActive && Math.Abs(renderer.StateForChecks(0).Width / scale - 22) < .01, "ReducedMotionChangesImmediately");
             states[0] = default; Present();
             Require(!renderer.StateForChecks(0).Visible && renderer.StateForChecks(0).BackgroundOpacity == 0, "ClosingRemovesMarkerAndBackground");
             renderer.SetTheme(settings);
@@ -1120,7 +1133,7 @@ internal sealed class DockWindow : IDisposable
             var point = new Native.Point { X = left + (int)(RestGeometry.Slots[1].X * scale), Y = top + (int)(y * scale) };
             int count = settings.Items.Count;
             int effect = dropTarget.DropFilesForChecks([shortcut, folder], point);
-            for (int i = 0; i < 80 && entries.Count != settings.Items.Count + 1; i++) await Task.Delay(25);
+            for (int i = 0; i < 80 && entries.Count != settings.Items.Count + 2; i++) await Task.Delay(25);
             Require(effect == 4 && settings.Items.Count == count + 2 && settings.Items[1].Target == shortcut, "OleFileDropInsertsShortcutAndFolder");
             Require(System.IO.File.Exists(shortcut) && before.SequenceEqual(System.IO.File.ReadAllBytes(shortcut)), "OriginalShortcutIsUnchanged");
             Require(!System.IO.File.Exists(System.IO.Path.Combine(data, "never-launched", "ready.json")), "PinningDoesNotLaunchApplication");
@@ -1140,7 +1153,7 @@ internal sealed class DockWindow : IDisposable
             Mouse(0x0200, removeX, removeY); await Task.Delay(60);
             Mouse(0x0202, removeX, removeY);
             Require(settings.Items.Count == beforeRemoval - 1 && !settings.Items.Any(item => item.Target == shortcut)
-                && renderer.IconCount == settings.Items.Count + 1 && ghost is null, "FarReleaseRemovesOnlyDockEntry");
+                && renderer.IconCount == settings.Items.Count + 2 && ghost is null, "FarReleaseRemovesOnlyDockEntry");
             Require(System.IO.File.Exists(shortcut) && before.SequenceEqual(System.IO.File.ReadAllBytes(shortcut)),
                 "DragRemovalLeavesOriginalShortcutUnchanged");
 
@@ -1193,7 +1206,7 @@ internal sealed class DockWindow : IDisposable
                     continuouslyVisible &= IsDockVisible && renderer.IconCount >= oldEntries.Length;
                     pixelsStayedVisible &= PixelPresent();
                 }
-                Require(pendingDropGeneration == 0 && entries.Count == settings.Items.Count + 1,
+                Require(pendingDropGeneration == 0 && entries.Count == settings.Items.Count + 2,
                     "SlowDropLayoutCompletes" + initialCount);
                 for (int i = 0; i < 10; i++)
                 {

@@ -19,6 +19,8 @@ public sealed class DockSettings
     public bool TaskbarAutoHide { get; set; } = true;
     public bool TaskbarGlass { get; set; } = true;
     public List<DockItem> Items { get; set; } = [];
+    public List<DesktopGroup> DesktopGroups { get; set; } = [];
+    public WidgetOptions Widgets { get; set; } = new();
 
     public void Normalize()
     {
@@ -27,6 +29,8 @@ public sealed class DockSettings
         BottomGap = double.IsFinite(BottomGap) ? Math.Clamp(BottomGap, 0, 100) : 12;
         Items = (Items ?? []).Where(x => x is not null && !string.IsNullOrWhiteSpace(x.Target))
             .DistinctBy(x => (x.Target.ToUpperInvariant(), x.Arguments)).Take(40).ToList();
+        DesktopGroups = DesktopLibrary.NormalizeGroups(DesktopGroups);
+        Widgets ??= new(); Widgets.Normalize();
     }
 }
 

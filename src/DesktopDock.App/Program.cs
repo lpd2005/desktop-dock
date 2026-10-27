@@ -17,7 +17,7 @@ internal static class Program
         string data = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "DesktopDock");
         int dataIndex = Array.IndexOf(args, "--data-dir");
         if (dataIndex >= 0 && dataIndex + 1 < args.Length) data = Path.GetFullPath(args[dataIndex + 1]);
-        bool preview = args.Contains("--preview") || args.Contains("--smoke-test") || args.Contains("--drag-test") || args.Contains("--click-hover-test") || args.Contains("--browser-window-test");
+        bool preview = args.Contains("--preview") || args.Contains("--smoke-test") || args.Contains("--drag-test") || args.Contains("--click-hover-test") || args.Contains("--browser-window-test") || args.Contains("--feature-test");
         Directory.CreateDirectory(data);
         if (args.Contains("--taskbar-guard")) return TaskbarRecovery.RunGuard(args, data);
         if (args.Contains("--taskbar-test")) return TaskbarChecks.Run(data);
@@ -83,7 +83,8 @@ internal static class Program
             };
             desktop.Recover();
             TaskbarRecovery.Restore(data);
-            controller = new(application, data, desktop, preview, args.Contains("--stress"));
+            bool automated = args.Any(x => x is "--smoke-test" or "--drag-test" or "--click-hover-test" or "--browser-window-test" or "--feature-test");
+            controller = new(application, data, desktop, preview, args.Contains("--stress"), showWidgets: !automated);
             application.Startup += async (_, _) =>
             {
                 if (args.Contains("--settings")) controller.OpenSettings();
@@ -92,6 +93,7 @@ internal static class Program
                 if (args.Contains("--drag-test")) await controller.RunDragTest(args.Contains("--hold-drag"));
                 if (args.Contains("--click-hover-test")) await controller.RunClickHoverTest();
                 if (args.Contains("--browser-window-test")) await controller.RunBrowserWindowTest();
+                if (args.Contains("--feature-test")) await controller.RunFeatureTest();
             };
             return application.Run();
         }
@@ -99,7 +101,7 @@ internal static class Program
         {
             desktop.Restore();
             File.WriteAllText(Path.Combine(data, "last-error.txt"), e.ToString());
-            if (!args.Contains("--smoke-test") && !args.Contains("--click-hover-test") && !args.Contains("--browser-window-test")) System.Windows.MessageBox.Show("Dock 无法启动。桌面已尝试恢复。诊断信息保存在本机应用数据目录。", "Desktop Dock");
+            if (!args.Contains("--smoke-test") && !args.Contains("--click-hover-test") && !args.Contains("--browser-window-test") && !args.Contains("--feature-test")) System.Windows.MessageBox.Show("Dock 无法启动。桌面已尝试恢复。诊断信息保存在本机应用数据目录。", "Desktop Dock");
             return 1;
         }
         finally
@@ -118,16 +120,21 @@ internal sealed class Controller : IDisposable
     private readonly DesktopIcons desktop;
     private readonly DockSettings settings;
     private readonly bool preview;
+    private readonly bool showWidgets;
     private readonly Forms.NotifyIcon tray;
     private readonly DockWindow dock;
     private readonly TaskbarEnhancement taskbar;
+    private readonly DesktopWidgets widgets;
+    private DesktopPanel? desktopPanel;
+    private readonly System.Drawing.Icon brandIcon;
     private (bool Enabled, bool AutoHide, bool Glass, bool Light, bool ReducedMotion)? taskbarConfiguration;
     private SettingsWindow? settingsWindow;
     private bool disposed;
 
-    public Controller(System.Windows.Application application, string data, DesktopIcons desktop, bool preview, bool stress)
+    public Controller(System.Windows.Application application, string data, DesktopIcons desktop, bool preview, bool stress, bool showWidgets = true)
     {
         this.application = application; this.data = data; this.desktop = desktop; this.preview = preview;
+        this.showWidgets = showWidgets;
         string file = Path.Combine(data, "settings.json");
         bool firstRun = !File.Exists(file);
         settings = SettingsStore.Load(file);
@@ -151,13 +158,19 @@ internal sealed class Controller : IDisposable
         if (preview) settings.TaskbarEnhancement = false;
         taskbar = new(data);
         dock = new(settings, OpenSettings, DockChanged, Recover, Quit, toggleSettings: ToggleSettings,
-            settingsHandle: () => settingsWindow is null ? 0 : new System.Windows.Interop.WindowInteropHelper(settingsWindow).Handle);
+            settingsHandle: () => settingsWindow is null ? 0 : new System.Windows.Interop.WindowInteropHelper(settingsWindow).Handle,
+            toggleApplications: ToggleApplications,
+            applicationsHandle: () => desktopPanel is null ? 0 : new System.Windows.Interop.WindowInteropHelper(desktopPanel).Handle,
+            applicationsOpen: () => desktopPanel?.Open == true);
+        widgets = new(settings, () => { Save(); settingsWindow?.RefreshWidgets(); }, data, network: !preview);
         dock.RestoreTaskbarRequested = RestoreTaskbar;
-        tray = new Forms.NotifyIcon { Text = "Desktop Dock", Icon = System.Drawing.SystemIcons.Application, Visible = true };
+        brandIcon = AppBrand.TrayIcon();
+        tray = new Forms.NotifyIcon { Text = "Desktop Dock", Icon = brandIcon, Visible = true };
         tray.DoubleClick += (_, _) => application.Dispatcher.Invoke(OpenSettings);
         var menu = new Forms.ContextMenuStrip();
         menu.Items.Add("显示 Dock", null, (_, _) => application.Dispatcher.Invoke(dock.Summon));
         menu.Items.Add("Dock 设置…", null, (_, _) => application.Dispatcher.Invoke(OpenSettings));
+        menu.Items.Add("桌面应用…", null, (_, _) => application.Dispatcher.Invoke(ToggleApplications));
         menu.Items.Add("恢复桌面图标", null, (_, _) => application.Dispatcher.Invoke(Recover));
         menu.Items.Add("唤出顶部任务栏", null, (_, _) => application.Dispatcher.Invoke(taskbar.Reveal));
         menu.Items.Add("恢复原生任务栏", null, (_, _) => application.Dispatcher.Invoke(RestoreTaskbar));
@@ -171,13 +184,24 @@ internal sealed class Controller : IDisposable
         await dock.LoadIcons();
         desktop.Apply(settings.HideDesktopIcons);
         ApplyTaskbar();
+        if (showWidgets) widgets.Apply();
     }
     private void Save()
     {
         if (!preview) SettingsStore.Save(Path.Combine(data, "settings.json"), settings);
     }
     private void DockChanged() { Save(); settingsWindow?.RefreshItems(); }
-    private void Apply() { Save(); desktop.Apply(settings.HideDesktopIcons); dock.ApplySettings(); ApplyTaskbar(); }
+    private void Apply() { Save(); desktop.Apply(settings.HideDesktopIcons); dock.ApplySettings(); ApplyTaskbar(); if (showWidgets) widgets.Apply(); }
+    private void ToggleApplications()
+    {
+        desktopPanel ??= new(settings, Save, dock.RefreshOcclusion, item => dock.OpenFromPanel(item), item => _ = PinFromPanel(item));
+        if (desktopPanel.Open) desktopPanel.Dismiss(); else _ = desktopPanel.Present();
+    }
+    private async Task PinFromPanel(DockItem item)
+    {
+        if (settings.Items.Count >= 40 || settings.Items.Any(x => x.Target.Equals(item.Target, StringComparison.OrdinalIgnoreCase))) return;
+        settings.Items.Add(item); Save(); settingsWindow?.RefreshItems(); await dock.LoadIcons();
+    }
     private void ApplyTaskbar()
     {
         var current = (settings.TaskbarEnhancement, settings.TaskbarAutoHide, settings.TaskbarGlass, settings.LightTheme, settings.ReducedMotion);
@@ -258,6 +282,14 @@ internal sealed class Controller : IDisposable
         dock.UseOcclusionWindowsForChecks(() => []);
         var checks = await BrowserWindowChecks.Run(Path.Combine(data, "browser-checks"));
         File.WriteAllText(Path.Combine(data, "browser-window-report.json"), JsonSerializer.Serialize(checks, new JsonSerializerOptions { WriteIndented = true }));
+        Quit();
+    }
+
+    public async Task RunFeatureTest()
+    {
+        dock.UseOcclusionWindowsForChecks(() => []);
+        var checks = await FeatureChecks.Run(Path.Combine(data, "feature-checks"));
+        File.WriteAllText(Path.Combine(data, "feature-report.json"), JsonSerializer.Serialize(checks, new JsonSerializerOptions { WriteIndented = true }));
         Quit();
     }
 
@@ -493,7 +525,7 @@ internal sealed class Controller : IDisposable
             await Task.Delay(5000); process.Refresh();
             var report = new
             {
-                Version = "0.1.0-preview.15", dock.HardwareRendering, dock.HostBackdrop, dock.IconCount,
+                Version = "0.1.0-preview.16", dock.HardwareRendering, dock.HostBackdrop, dock.IconCount,
                 BottomEdgeReveals = true, EdgeLeaveHides = recallTimedOut, HoverKeepsVisible = interactionResetTimeout,
                 ContextMenuStaysOpen = menuStaysOpen,
                 VisibilityMotionChecks = visibilityMotionChecks,
@@ -524,5 +556,6 @@ internal sealed class Controller : IDisposable
         if (disposed) return;
         disposed = true; tray.Visible = false; tray.ContextMenuStrip?.Dispose(); tray.Dispose();
         taskbar.Dispose(); dock.Dispose(); desktop.Restore();
+        desktopPanel?.DisposeWindow(); widgets.Dispose(); brandIcon.Dispose();
     }
 }

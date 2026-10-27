@@ -12,11 +12,14 @@ internal sealed class SettingsWindow : Window
     private readonly Action reload;
     private readonly ListBox applications;
     private readonly TextBlock status;
+    private readonly List<(CheckBox Check, Func<bool> Value)> widgetChecks = [];
+    private bool refreshingWidgets;
 
     public SettingsWindow(DockSettings settings, Action apply, Action reload, Action quit, TaskbarEnhancement taskbar)
     {
         this.settings = settings; this.apply = apply; this.reload = reload;
         Title = "Desktop Dock · 设置";
+        Icon = AppBrand.Image();
         ShowInTaskbar = false;
         WindowStyle = WindowStyle.ToolWindow;
         Width = 570; Height = 730; MinWidth = 500; MinHeight = 500;
@@ -27,7 +30,8 @@ internal sealed class SettingsWindow : Window
         var content = new StackPanel { Margin = new Thickness(30, 25, 30, 25) };
         var surface = new ScrollViewer { Content = content, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
         Content = surface;
-        content.Children.Add(new TextBlock { Text = "DESKTOP DOCK  /  0.1 preview.14", FontSize = 11, Foreground = Brushes.LightSteelBlue });
+        content.Children.Add(new Image { Source = AppBrand.Image(), Width = 44, Height = 44, HorizontalAlignment = HorizontalAlignment.Left, Margin = new(0, 0, 0, 10) });
+        content.Children.Add(new TextBlock { Text = "DESKTOP DOCK  /  0.1 preview.16", FontSize = 11, Foreground = Brushes.LightSteelBlue });
         content.Children.Add(new TextBlock { Text = "让桌面，轻一点。", FontSize = 29, FontWeight = FontWeights.SemiBold, Margin = new(0, 10, 0, 8) });
         content.Children.Add(new TextBlock { Text = "透明悬浮 · 轻盈倒影 · 圆润图标", Foreground = Brushes.LightSlateGray, Margin = new(0, 0, 0, 20) });
         content.Children.Add(new TextBlock { Text = "鼠标在主屏底边停留约 0.2 秒唤出 Dock。\n停留在图标或菜单上保持显示，移开约 0.75 秒收起。", FontSize = 11, Foreground = Brushes.LightSteelBlue, Margin = new(0, 0, 0, 16) });
@@ -39,6 +43,16 @@ internal sealed class SettingsWindow : Window
         AddCheck(content, "减少动画", settings.ReducedMotion, v => settings.ReducedMotion = v);
         AddCheck(content, "自动隐藏 Dock", settings.AutoHide, v => settings.AutoHide = v);
         AddCheck(content, "隐藏桌面图标（退出时恢复）", settings.HideDesktopIcons, v => settings.HideDesktopIcons = v);
+        content.Children.Add(new TextBlock { Text = "桌面小组件", FontSize = 15, FontWeight = FontWeights.SemiBold, Margin = new(0, 22, 0, 8) });
+        widgetChecks.Add((AddCheck(content, "时间", settings.Widgets.Clock, v => settings.Widgets.Clock = v), () => settings.Widgets.Clock));
+        widgetChecks.Add((AddCheck(content, "日历", settings.Widgets.Calendar, v => settings.Widgets.Calendar = v), () => settings.Widgets.Calendar));
+        widgetChecks.Add((AddCheck(content, "天气", settings.Widgets.Weather, v => settings.Widgets.Weather = v), () => settings.Widgets.Weather));
+        widgetChecks.Add((AddCheck(content, "浅色组件卡片", settings.Widgets.Light, v => settings.Widgets.Light = v), () => settings.Widgets.Light));
+        var cityRow = new DockPanel { Margin = new(0, 8, 0, 0) };
+        var city = new TextBox { Text = settings.Widgets.City, MaxLength = 80, Padding = new(8), VerticalContentAlignment = VerticalAlignment.Center };
+        var citySave = Button("应用城市", () => { settings.Widgets.City = city.Text.Trim(); apply(); city.Text = settings.Widgets.City; });
+        DockPanel.SetDock(citySave, Dock.Right); cityRow.Children.Add(citySave); cityRow.Children.Add(city); content.Children.Add(cityRow);
+        content.Children.Add(new TextBlock { Text = "拖动组件空白区域调整位置，悬停后点 × 可单独移除。天气仅查询填写的城市，每 30 分钟刷新；数据来自 Open-Meteo，不自动定位。", FontSize = 11, Foreground = Brushes.LightSlateGray, TextWrapping = TextWrapping.Wrap, Margin = new(0, 6, 0, 0) });
         content.Children.Add(new TextBlock { Text = "顶部原生任务栏", FontSize = 15, FontWeight = FontWeights.SemiBold, Margin = new(0, 22, 0, 8) });
         AddCheck(content, "启用任务栏增强（退出时恢复）", settings.TaskbarEnhancement, v => settings.TaskbarEnhancement = v);
         AddCheck(content, "任务栏自动隐藏 · 顶边停留唤出", settings.TaskbarAutoHide, v => settings.TaskbarAutoHide = v);
@@ -77,12 +91,19 @@ internal sealed class SettingsWindow : Window
         content.Children.Add(slider);
     }
 
-    private void AddCheck(Panel content, string text, bool value, Action<bool> setter)
+    private CheckBox AddCheck(Panel content, string text, bool value, Action<bool> setter)
     {
         var box = new CheckBox { Content = text, IsChecked = value, Foreground = Brushes.White, Margin = new(0, 5, 0, 5) };
-        box.Checked += (_, _) => { setter(true); apply(); };
-        box.Unchecked += (_, _) => { setter(false); apply(); };
+        box.Checked += (_, _) => { if (!refreshingWidgets) { setter(true); apply(); } };
+        box.Unchecked += (_, _) => { if (!refreshingWidgets) { setter(false); apply(); } };
         content.Children.Add(box);
+        return box;
+    }
+    internal void RefreshWidgets()
+    {
+        refreshingWidgets = true;
+        try { foreach (var (check, value) in widgetChecks) check.IsChecked = value(); }
+        finally { refreshingWidgets = false; }
     }
 
     private static Button Button(string label, Action action)

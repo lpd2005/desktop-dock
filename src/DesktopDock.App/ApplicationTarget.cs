@@ -8,6 +8,7 @@ namespace DesktopDock.App;
 
 internal sealed record ApplicationTarget(string? ProcessName, string? AppId, bool SpecificWindow)
 {
+    internal const string WindowsSettingsId = "windows.immersivecontrolpanel_cw5n1h2txyewy!microsoft.windows.immersivecontrolpanel";
     public string? ExecutablePath { get; init; }
     public static ApplicationTarget Resolve(string input, string arguments)
     {
@@ -49,6 +50,14 @@ internal sealed record ApplicationTarget(string? ProcessName, string? AppId, boo
             || Directory.Exists(target) || target.StartsWith("shell:", StringComparison.OrdinalIgnoreCase);
         // An AppsFolder argument identifies an application, not an argument-specific document window.
         if (shellApplication || !string.IsNullOrWhiteSpace(appId) && process is null) specific = false;
+        // Settings can be activated through a URI, an Explorer shortcut, or its
+        // packaged entry. Match its application identity even when a host owns
+        // the top-level frame; URI activation must not keep creating bindings.
+        if (target.StartsWith("ms-settings:", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(process, "SystemSettings", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(process, "explorer", StringComparison.OrdinalIgnoreCase) && args.Trim().Trim('"').StartsWith("ms-settings:", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(appId, WindowsSettingsId, StringComparison.OrdinalIgnoreCase))
+        { process = "SystemSettings"; appId = WindowsSettingsId; specific = false; }
         return new(process, string.IsNullOrWhiteSpace(appId) ? null : appId, specific)
         {
             ExecutablePath = Path.IsPathFullyQualified(target) && target.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)

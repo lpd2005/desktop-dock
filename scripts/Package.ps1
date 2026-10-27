@@ -19,7 +19,7 @@ $env:DOTNET_GENERATE_ASPNET_CERTIFICATE = 'false'
 if ($LASTEXITCODE -ne 0) { throw 'Build failed.' }
 & $taskDotnet tests/DesktopDock.Checks/bin/Release/net10.0/DesktopDock.Checks.dll
 if ($LASTEXITCODE -ne 0) { throw 'Core checks failed.' }
-$taskOutput = Join-Path $taskRoot 'artifacts/DesktopDock-0.1.0-preview.15-win-x64'
+$taskOutput = Join-Path $taskRoot 'artifacts/DesktopDock-0.1.0-preview.16-win-x64'
 & $taskDotnet publish src/DesktopDock.App/DesktopDock.App.csproj -c Release -r win-x64 --self-contained true -o $taskOutput -p:DebugType=none --disable-build-servers -m:1
 if ($LASTEXITCODE -ne 0) { throw 'Publish failed.' }
 Copy-Item -LiteralPath README.md -Destination (Join-Path $taskOutput 'README.md')
@@ -36,7 +36,7 @@ foreach ($taskNotice in @('LICENSE.txt','ThirdPartyNotices.txt')) {
         Copy-Item -LiteralPath $taskSourceNotice -Destination (Join-Path $taskOutput ("licenses/Microsoft.NET." + $taskNotice))
     }
 }
-$taskForbidden = Get-ChildItem -LiteralPath $taskOutput -Recurse -File | Where-Object { $_.Name -in @('settings.json','desktop-state.json','taskbar-state.json','last-error.txt','smoke-report.json') -or $_.Extension -in @('.log','.dmp','.etl','.pfx','.pem') }
+$taskForbidden = Get-ChildItem -LiteralPath $taskOutput -Recurse -File | Where-Object { $_.Name -in @('settings.json','desktop-state.json','taskbar-state.json','last-error.txt','smoke-report.json','feature-report.json','weather-cache.json') -or $_.Extension -in @('.log','.dmp','.etl','.pfx','.pem') }
 if ($taskForbidden) { throw 'Package contains local runtime data.' }
 $taskZip = "$taskOutput.zip"
 Compress-Archive -Path (Join-Path $taskOutput '*') -DestinationPath $taskZip -Force
