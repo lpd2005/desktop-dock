@@ -17,19 +17,20 @@ internal sealed class LaunchCoordinator : IDisposable
     private HashSet<nint> previous = [];
     private double started;
     private nint launchForeground;
+    private readonly Func<nint, string?> readAppId;
     public bool IsWatching => timer.IsEnabled;
     public AppClickAction LastAction { get; private set; }
     public nint LastWindow { get; private set; }
 
-    public LaunchCoordinator()
+    public LaunchCoordinator(Func<nint, string?>? readAppId = null)
     {
+        this.readAppId = readAppId ?? WindowAppId.Read;
         timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(100) };
         timer.Tick += (_, _) => Poll();
     }
 
-    public void Launch(DockItem item, bool toggle = true, nint? foregroundAtPress = null)
+    public void Launch(DockItem item, bool toggle = true, nint? foregroundAtPress = null, bool allowLaunch = true)
     {
-        timer.Stop();
         string key = item.Target + "\n" + item.Arguments;
         if (targets.Count > 100) { targets.Clear(); bound.Clear(); }
         if (!targets.TryGetValue(key, out var info)) targets[key] = info = ApplicationTarget.Resolve(item.Target, item.Arguments);
@@ -47,6 +48,7 @@ internal sealed class LaunchCoordinator : IDisposable
         if (matches.Contains(foreground)) existing = foreground;
         if (existing != 0)
         {
+            StopWatch();
             LastWindow = existing;
             LastAction = AppClick.Decide(true, existing == foreground, Native.IsIconic(existing), toggle);
             Native.GetWindowThreadProcessId(existing, out uint pid);
@@ -59,7 +61,10 @@ internal sealed class LaunchCoordinator : IDisposable
             }
             return;
         }
-        LastAction = AppClickAction.Launch; LastWindow = 0;
+        LastAction = AppClick.Decide(false, false, false, toggle, allowLaunch && !(IsWatching && key == pendingKey));
+        LastWindow = 0;
+        if (LastAction == AppClickAction.Ignore) return;
+        StopWatch();
         launchForeground = Native.GetForegroundWindow();
         using var process = Process.Start(new ProcessStartInfo(Environment.ExpandEnvironmentVariables(item.Target), item.Arguments) { UseShellExecute = true });
         pendingKey = key; pendingTarget = info; previous = windows.ToHashSet();
@@ -109,7 +114,7 @@ internal sealed class LaunchCoordinator : IDisposable
         return result;
     }
 
-    private static bool Matches(nint hwnd, uint expectedPid, ApplicationTarget? info)
+    internal bool Matches(nint hwnd, uint expectedPid, ApplicationTarget? info)
     {
         Native.GetWindowThreadProcessId(hwnd, out uint pid);
         if (pid == Environment.ProcessId) return false;
@@ -117,9 +122,10 @@ internal sealed class LaunchCoordinator : IDisposable
         if (info is null) return false;
         if (info.AppId is not null)
         {
-            string? id = WindowAppId.Read(hwnd);
+            string? id = readAppId(hwnd);
             if (!string.IsNullOrEmpty(id)) return info.AppId.Equals(id, StringComparison.OrdinalIgnoreCase);
-            if (info.ProcessName == "explorer") return false;
+            // Never fall back to the shell's process name for an app activation shortcut.
+            if (info.ProcessName == "explorer" || info.AppId.Contains('!')) return false;
         }
         if (info.ProcessName is null) return false;
         try { using var process = Process.GetProcessById((int)pid); return info.ProcessName.Equals(process.ProcessName, StringComparison.OrdinalIgnoreCase); }

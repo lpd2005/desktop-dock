@@ -1,6 +1,6 @@
 # Dock 交互与当前实现
 
-当前以 0.1.0-preview.8 为准。preview.2 的启动动效和窗口位置调整已按用户要求移除。
+当前以 0.1.0-preview.9 为准。preview.2 的启动动效和窗口位置调整已按用户要求移除。
 
 ## 显示、遮挡与召回
 
@@ -24,21 +24,24 @@
 
 ## 应用图标的任务栏语义
 
-- 没有可匹配窗口：正常启动。
+- 没有可匹配窗口：单击不启动，双击启动。
 - 目标窗口当前活动且没有最小化：再次点击最小化。
 - 目标窗口已最小化：恢复。
 - 目标窗口在后台：激活。
 - 右键菜单的打开操作只打开 / 激活，不最小化。
+- Dock 设置保留单击打开和再次点击最小化。
+
+双击匹配同一入口、Windows 的双击时间及距离范围；拖拽、取消、图标更新或右键菜单会清除上一点击。普通按下和原生 WM_LBUTTONDBLCLK 路径均可完成第二次点击。识别不使用常驻计时器，也不延迟已运行应用的单击响应；应用启动后的短暂识别期间阻止重复启动，后续单击不会中止窗口关联。
 
 活动窗口取鼠标按下时的根窗口快照，松开时使用同一快照作点击判断。点击过程中出现焦点变化时，仍按最初点击的活动状态决定最小化；取消的按下会清除快照。Dock 设置图标使用相同语义。
 
-EXE、快捷方式目标、应用 URI、应用标识和本次启动窗口用于关联图标。链接只读取目标信息，不修改原快捷方式；窗口关联只保存在当前进程内。文件夹、URL 和带参数的入口优先使用本次启动后关联的窗口，避免泛化到无关窗口。
+EXE、快捷方式目标、应用 URI、应用标识和本次启动窗口用于关联图标。商店桌面应用优先使用系统进程包标识，无包身份时读取窗口的显式应用标识；只有进程标识的窗口也可关联。AppsFolder 的应用标识参数表示应用身份，不作为独立文档参数；不回退到操作所有 Explorer 窗口。链接只读取目标信息，不修改原快捷方式；窗口关联只保存在当前进程内。文件夹、URL 和其他带参数的入口优先使用本次启动后关联的窗口，避免泛化到无关窗口。
 
-多窗口应用当前处理活动或最近关联的窗口；完整缩略图选择仍属后续范围。自定义启动代理、权限受限程序和特殊窗口需要继续兼容验证。无法可靠识别时保留正常启动，不猜测操作其他应用。
+多窗口应用当前处理活动或最近关联的窗口；完整缩略图选择仍属后续范围。自定义启动代理、权限受限程序和特殊窗口需要继续兼容验证。无法可靠识别时保留双击启动，不猜测操作其他应用。
 
 通过 ShowWindowAsync 最小化 / 恢复，保留应用内容；应用启动和切换不关闭或移动外部窗口。只有用户主动开启的任务栏增强管理原生任务栏及其顶部预留工作区。
 
-依据：[ShowWindowAsync](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-showwindowasync)、[AppUserModel.ID](https://learn.microsoft.com/en-us/windows/win32/properties/props-system-appusermodel-id)。
+依据：[ShowWindowAsync](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-showwindowasync)、[AppUserModel.ID](https://learn.microsoft.com/en-us/windows/win32/properties/props-system-appusermodel-id)、[GetApplicationUserModelId](https://learn.microsoft.com/en-us/windows/win32/api/appmodel/nf-appmodel-getapplicationusermodelid)、[GetDoubleClickTime](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getdoubleclicktime)。
 
 ## Alt+Tab 闪现修复
 

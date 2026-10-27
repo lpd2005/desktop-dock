@@ -59,6 +59,8 @@ internal sealed class DockWindow : IDisposable
     private double dropVisibleUntil = double.NegativeInfinity;
     internal int IconLoadDelayForChecks { get; set; }
     private Native.Point pressedPoint;
+    private double pressedAt;
+    private readonly DockClickSequence clicks = new();
     private nint? pressedForeground;
     private bool dragging, returning, sortingSettles, externalDrop, suppressHover, systemDragging;
     private bool checkingInteraction;
@@ -336,9 +338,11 @@ internal sealed class DockWindow : IDisposable
                 if (pressedIndex < 0) StartRendering();
                 break;
             case 0x0201:
+            case 0x0203: // Some input classes replace the second button-down with WM_LBUTTONDBLCLK.
                 NoteInteraction();
                 interactionVersion++;
                 pressedForeground = Native.GetAncestor(Native.GetForegroundWindow(), 3);
+                pressedAt = clock.Elapsed.TotalSeconds;
                 if (returning) FinishGhost();
                 label.IsOpen = false; labelTimer.Stop();
                 pressedIndex = HitIndex(x, y); pressedPoint = new() { X = x, Y = y };
@@ -364,14 +368,22 @@ internal sealed class DockWindow : IDisposable
                 Native.ReleaseCapture();
                 bool moved = DockReorder.Moved((x - pressedPoint.X) / scale, (y - pressedPoint.Y) / scale);
                 suppressHover = true;
-                if (!wasDragging && pressed >= 0 && pressed < entries.Count && !moved) Launch(entries[pressed], foregroundAtPress: clickForeground);
+                if (!wasDragging && pressed >= 0 && pressed < entries.Count && !moved)
+                {
+                    var clicked = entries[pressed];
+                    bool doubleClick = clicks.Complete(clicked.Target + "\n" + clicked.Arguments, pressedAt,
+                        left + pressedPoint.X, top + pressedPoint.Y, Native.GetDoubleClickTime() / 1000d,
+                        Native.GetSystemMetrics(36), Native.GetSystemMetrics(37));
+                    Launch(clicked, foregroundAtPress: clickForeground, allowLaunch: doubleClick);
+                }
+                else clicks.Reset();
                 StartRendering();
                 break;
             case 0x0215:
             case 0x001F:
                 if (pressedIndex >= 0 || dragging || startingDrag) CancelInteraction();
                 break;
-            case 0x0205: NoteInteraction(); ShowMenu(HitIndex(x, y)); break;
+            case 0x0205: clicks.Reset(); NoteInteraction(); ShowMenu(HitIndex(x, y)); break;
             case 0x007E:
             case 0x001A:
             case 0x02E0: source.Dispatcher.BeginInvoke(Reposition); break;
@@ -393,13 +405,13 @@ internal sealed class DockWindow : IDisposable
         label.IsOpen = true;
     }
 
-    private void Launch(DockItem item, bool toggle = true, nint? foregroundAtPress = null)
+    private void Launch(DockItem item, bool toggle = true, nint? foregroundAtPress = null, bool allowLaunch = true)
     {
         NoteInteraction();
         if (item.Target == "dock:settings") { if (toggle) toggleSettings(foregroundAtPress); else openSettings(); return; }
         try
         {
-            launcher.Launch(item, toggle, foregroundAtPress);
+            launcher.Launch(item, toggle, foregroundAtPress, allowLaunch);
         }
         catch (Exception e) when (e is System.ComponentModel.Win32Exception or InvalidOperationException)
         { System.Windows.MessageBox.Show("无法打开这个入口，请检查目标是否仍然存在。", "Desktop Dock"); }
@@ -618,6 +630,7 @@ internal sealed class DockWindow : IDisposable
     }
     private void CancelInteraction()
     {
+        clicks.Reset();
         interactionVersion++;
         pressedIndex = -1;
         pressedForeground = null;
@@ -675,7 +688,7 @@ internal sealed class DockWindow : IDisposable
     {
         if (!settings.Items.Contains(item)) { settings.Items.Add(item); await LoadIcons(); }
     }
-    internal void ClickForCheck(DockItem item, Action? betweenPressAndRelease = null)
+    internal void ClickForCheck(DockItem item, Action? betweenPressAndRelease = null, bool nativeDoubleClick = false)
     {
         int index = entries.IndexOf(item);
         if (index < 0) throw new InvalidOperationException("Missing test entry.");
@@ -686,7 +699,7 @@ internal sealed class DockWindow : IDisposable
         bool previous = checkingInteraction; checkingInteraction = true;
         try
         {
-            Native.SendMessage(Handle, 0x0201, 1, point);
+            Native.SendMessage(Handle, nativeDoubleClick ? 0x0203 : 0x0201, 1, point);
             betweenPressAndRelease?.Invoke();
             Native.SendMessage(Handle, 0x0202, 0, point);
         }

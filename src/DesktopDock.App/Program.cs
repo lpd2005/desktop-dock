@@ -30,6 +30,9 @@ internal static class Program
         int probeIndex = Array.IndexOf(args, "--probe-window");
         if (probeIndex >= 0 && probeIndex + 1 < args.Length)
         {
+            int delayIndex = Array.IndexOf(args, "--probe-delay-ms");
+            if (delayIndex >= 0 && delayIndex + 1 < args.Length && int.TryParse(args[delayIndex + 1], out int delay))
+                Thread.Sleep(Math.Clamp(delay, 0, 2000));
             int grantIndex = Array.IndexOf(args, "--allow-foreground");
             uint parent = grantIndex >= 0 && grantIndex + 1 < args.Length && uint.TryParse(args[grantIndex + 1], out uint parsed) ? parsed : 0;
             return RegressionProbe.Run(args[probeIndex + 1], data, parent);
@@ -326,7 +329,7 @@ internal sealed class Controller : IDisposable
             {
                 string launchData = Path.Combine(probeData, shortcut ? "shortcut" : "executable");
                 Directory.CreateDirectory(launchData);
-                string arguments = prefix + "--probe-window normal --allow-foreground " + Environment.ProcessId + " --data-dir \"" + launchData + "\"";
+                string arguments = prefix + "--probe-window normal --probe-delay-ms 1000 --allow-foreground " + Environment.ProcessId + " --data-dir \"" + launchData + "\"";
                 DockItem item;
                 if (shortcut)
                 {
@@ -339,6 +342,17 @@ internal sealed class Controller : IDisposable
                 dock.Summon(); await dock.WaitUntilShownForChecks();
                 dock.ClickForCheck(item);
                 string ready = Path.Combine(launchData, "ready.json");
+                bool singleIgnored = dock.LastAppAction == AppClickAction.Ignore && !dock.LaunchWatcherActive;
+                await Task.Delay((int)Native.GetDoubleClickTime() + 40);
+                Require(singleIgnored && !File.Exists(ready), "A single click launched an unopened application.");
+                dock.ClickForCheck(item);
+                Require(dock.LastAppAction == AppClickAction.Ignore, "The first click of a pair must not launch.");
+                dock.ClickForCheck(item, nativeDoubleClick: true);
+                bool doubleLaunched = dock.LastAppAction == AppClickAction.Launch && dock.LaunchWatcherActive;
+                dock.ClickForCheck(item);
+                dock.ClickForCheck(item, nativeDoubleClick: true);
+                bool pendingPreserved = dock.LastAppAction == AppClickAction.Ignore && dock.LaunchWatcherActive;
+                Require(doubleLaunched && pendingPreserved, "Double-click launch or duplicate-launch suppression failed.");
                 await WaitFor(() => File.Exists(ready), "Application did not launch.");
                 await Task.Delay(100);
                 nint child = RegressionProbe.Handle(launchData);
@@ -372,6 +386,31 @@ internal sealed class Controller : IDisposable
                 applicationChecks[shortcut ? "ShortcutToggleAndNoMove" : "ExecutableToggleAndNoMove"] = restoring && notMoved;
                 applicationChecks[shortcut ? "ShortcutBackgroundActivate" : "ExecutableBackgroundActivate"] = activated;
                 applicationChecks[shortcut ? "ShortcutPressForegroundToggle" : "ExecutablePressForegroundToggle"] = pressForegroundToggle;
+                applicationChecks[shortcut ? "ShortcutSingleDoesNotLaunch" : "ExecutableSingleDoesNotLaunch"] = singleIgnored;
+                applicationChecks[shortcut ? "ShortcutDoubleLaunchesOnce" : "ExecutableDoubleLaunchesOnce"] = doubleLaunched && pendingPreserved;
+                if (!shortcut)
+                {
+                    const string exampleId = "Example.DesktopSuite_0123456789abc!App";
+                    var packaged = ApplicationTarget.Resolve("explorer.exe", "shell:AppsFolder\\" + exampleId);
+                    var direct = ApplicationTarget.Resolve("shell:AppsFolder\\" + exampleId, "");
+                    string appLink = Path.Combine(probeData, "Packaged example.lnk");
+                    RegressionProbe.CreateShortcut(appLink, Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "explorer.exe"), "shell:AppsFolder\\" + exampleId);
+                    var linked = ApplicationTarget.Resolve(appLink, "");
+                    bool appActivation = new[] { packaged, direct, linked }.All(x => x.AppId == exampleId && !x.SpecificWindow);
+                    using var identityLauncher = new LaunchCoordinator(hwnd => hwnd == child ? exampleId : "Example.OtherSuite_0123456789abc!App");
+                    bool identityMatch = identityLauncher.Matches(child, 0, packaged) && !identityLauncher.Matches(anchorWindow, 0, packaged);
+                    var packagedItem = new DockItem("Example packaged app", "explorer.exe", "shell:AppsFolder\\" + exampleId);
+                    identityLauncher.Launch(packagedItem, foregroundAtPress: child, allowLaunch: false);
+                    bool packageMinimized = identityLauncher.LastWindow == child && identityLauncher.LastAction == AppClickAction.Minimize;
+                    await WaitFor(() => Native.IsIconic(child), "Packaged app identity did not minimize the matching window.");
+                    identityLauncher.Launch(packagedItem, allowLaunch: false);
+                    bool packageRestored = identityLauncher.LastWindow == child && identityLauncher.LastAction == AppClickAction.Restore;
+                    await WaitFor(() => !Native.IsIconic(child), "Packaged app identity did not restore the matching window.");
+                    applicationChecks["AppsFolderAndShortcutIdentifyApplication"] = appActivation;
+                    applicationChecks["PackagedIdentityDoesNotMatchOtherApp"] = identityMatch;
+                    applicationChecks["PackagedIdentityMinimizesAndRestores"] = packageMinimized && packageRestored;
+                    Require(appActivation && identityMatch && packageMinimized && packageRestored, "Packaged application association regression.");
+                }
                 Native.PostMessage(child, 0x0010, 0, 0);
                 await Task.Delay(250);
                 testWindows.Remove(child);
@@ -404,7 +443,7 @@ internal sealed class Controller : IDisposable
             await Task.Delay(5000); process.Refresh();
             var report = new
             {
-                Version = "0.1.0-preview.8", dock.HardwareRendering, dock.HostBackdrop, dock.IconCount,
+                Version = "0.1.0-preview.9", dock.HardwareRendering, dock.HostBackdrop, dock.IconCount,
                 BottomEdgeReveals = true, EdgeLeaveHides = recallTimedOut, HoverKeepsVisible = interactionResetTimeout,
                 ContextMenuStaysOpen = menuStaysOpen,
                 VisibilityMotionChecks = visibilityMotionChecks,

@@ -34,10 +34,10 @@ public sealed class DockVisibility
     }
 }
 
-public enum AppClickAction { Launch, Minimize, Restore, Activate }
+public enum AppClickAction { Ignore, Launch, Minimize, Restore, Activate }
 public static class AppClick
 {
-    public static AppClickAction Decide(bool exists, bool active, bool minimized, bool toggle = true)
-        => !exists ? AppClickAction.Launch : minimized ? AppClickAction.Restore
+    public static AppClickAction Decide(bool exists, bool active, bool minimized, bool toggle = true, bool allowLaunch = true)
+        => !exists ? allowLaunch ? AppClickAction.Launch : AppClickAction.Ignore : minimized ? AppClickAction.Restore
         : active && toggle ? AppClickAction.Minimize : AppClickAction.Activate;
 }

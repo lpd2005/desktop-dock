@@ -1,6 +1,7 @@
 using System.IO;
 using System.Runtime.InteropServices;
 using Microsoft.Win32;
+using System.Text;
 
 namespace DesktopDock.App;
 
@@ -37,12 +38,15 @@ internal sealed record ApplicationTarget(string? ProcessName, string? AppId, boo
         }
         const string appsFolder = "shell:AppsFolder\\";
         int appIndex = (target + " " + args).IndexOf(appsFolder, StringComparison.OrdinalIgnoreCase);
-        if (appIndex >= 0) appId = (target + " " + args)[(appIndex + appsFolder.Length)..].Trim().Trim('"').Split(' ')[0];
+        bool shellApplication = appIndex >= 0;
+        if (shellApplication) appId = (target + " " + args)[(appIndex + appsFolder.Length)..].Trim().Trim('"').Split(' ')[0];
         string? process = target.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ? Path.GetFileNameWithoutExtension(target)
             : target.StartsWith("ms-settings:", StringComparison.OrdinalIgnoreCase) ? "SystemSettings"
             : target.StartsWith("microsoft-edge:", StringComparison.OrdinalIgnoreCase) ? "msedge"
             : Directory.Exists(target) || target.StartsWith("shell:", StringComparison.OrdinalIgnoreCase) ? "explorer" : UriProcess(target);
         specific |= Directory.Exists(target) || target.StartsWith("shell:", StringComparison.OrdinalIgnoreCase);
+        // An AppsFolder argument identifies an application, not an argument-specific document window.
+        if (shellApplication || !string.IsNullOrWhiteSpace(appId) && process is null) specific = false;
         return new(process, string.IsNullOrWhiteSpace(appId) ? null : appId, specific);
     }
 
@@ -78,6 +82,30 @@ internal static class WindowAppId
     }
     public static string? Read(nint hwnd)
     {
+        string? explicitId = ReadWindow(hwnd);
+        Native.GetWindowThreadProcessId(hwnd, out uint pid);
+        string? processId = ReadProcess(pid);
+        // Packaged desktop apps can expose only process identity. Their optional
+        // explicit window ID may also differ from the Store activation identity.
+        return processId ?? explicitId;
+    }
+
+    internal static string? ReadProcess(uint pid)
+    {
+        nint process = OpenProcess(0x1000, false, pid);
+        if (process == 0) return null;
+        try
+        {
+            uint length = 0;
+            if (GetApplicationUserModelId(process, ref length, null) != 122 || length is 0 or > 512) return null;
+            var value = new StringBuilder((int)length);
+            return GetApplicationUserModelId(process, ref length, value) == 0 ? value.ToString() : null;
+        }
+        finally { CloseHandle(process); }
+    }
+
+    private static string? ReadWindow(nint hwnd)
+    {
         Guid iid = typeof(IPropertyStore).GUID;
         if (SHGetPropertyStoreForWindow(hwnd, in iid, out var store) != 0 || store is null) return null;
         try
@@ -91,4 +119,7 @@ internal static class WindowAppId
     }
     [DllImport("shell32.dll")] private static extern int SHGetPropertyStoreForWindow(nint hwnd, in Guid iid, [MarshalAs(UnmanagedType.Interface)] out IPropertyStore? store);
     [DllImport("ole32.dll")] private static extern int PropVariantClear(ref Variant value);
+    [DllImport("kernel32.dll")] private static extern nint OpenProcess(uint access, bool inherit, uint process);
+    [DllImport("kernel32.dll")] private static extern bool CloseHandle(nint handle);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] private static extern int GetApplicationUserModelId(nint process, ref uint length, StringBuilder? value);
 }
