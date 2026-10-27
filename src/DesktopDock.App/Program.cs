@@ -411,11 +411,15 @@ internal sealed class Controller : IDisposable
                     applicationChecks["PackagedIdentityMinimizesAndRestores"] = packageMinimized && packageRestored;
                     Require(appActivation && identityMatch && packageMinimized && packageRestored, "Packaged application association regression.");
                 }
-                Native.PostMessage(child, 0x0010, 0, 0);
-                await Task.Delay(250);
+                bool menuClosed = dock.CloseFromMenuForChecks(item);
+                await WaitFor(() => !Native.IsWindow(child), "Close-window menu action did not close the application window.");
+                applicationChecks[shortcut ? "ShortcutMenuClose" : "ExecutableMenuClose"] = menuClosed;
+                Require(menuClosed, "Running application's close/exit menu entries were disabled.");
                 testWindows.Remove(child);
                 Require(restoring && notMoved && activated, "Application regression: " + JsonSerializer.Serialize(new { Shortcut = shortcut, Restored = restoring, NoMove = notMoved, BackgroundActivated = activated, Action = dock.LastAppAction.ToString() }));
             }
+
+            var exitChecks = await ApplicationExitChecks.Run(Path.Combine(probeData, "exit-checks"), anchor);
 
             await RegressionProbe.SetMode(anchor, probeData, "normal");
             dock.RefreshOcclusion(); await dock.WaitUntilShownForChecks();
@@ -443,14 +447,14 @@ internal sealed class Controller : IDisposable
             await Task.Delay(5000); process.Refresh();
             var report = new
             {
-                Version = "0.1.0-preview.9", dock.HardwareRendering, dock.HostBackdrop, dock.IconCount,
+                Version = "0.1.0-preview.10", dock.HardwareRendering, dock.HostBackdrop, dock.IconCount,
                 BottomEdgeReveals = true, EdgeLeaveHides = recallTimedOut, HoverKeepsVisible = interactionResetTimeout,
                 ContextMenuStaysOpen = menuStaysOpen,
                 VisibilityMotionChecks = visibilityMotionChecks,
                 DockExcludedFromAltTab = dock.ExcludedFromAltTab, SettingsExcludedFromAltTab = settingsExcluded, NoTaskSwitchFlash = noImmediateFlash,
                 SettingsOpened = settingsOpened, SettingsMinimized = settingsMinimized, SettingsRestored = settingsRestored,
                 SettingsKeepsDockVisible = settingsKeepsDockVisible, OtherWindowStillHides = otherWindowStillHides,
-                ApplicationChecks = applicationChecks, Avoidance = avoidance,
+                ApplicationChecks = applicationChecks, ExitChecks = exitChecks, Avoidance = avoidance,
                 DragChecks = dragChecks,
                 InputRegion = input, HoveredInputRegion = hoveredInput,
                 IdleCpuPercent = (process.TotalProcessorTime - initialCpu).TotalMilliseconds / watch.Elapsed.TotalMilliseconds / Environment.ProcessorCount * 100,

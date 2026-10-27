@@ -7,6 +7,7 @@ namespace DesktopDock.App;
 
 internal sealed record ApplicationTarget(string? ProcessName, string? AppId, bool SpecificWindow)
 {
+    public string? ExecutablePath { get; init; }
     public static ApplicationTarget Resolve(string input, string arguments)
     {
         string target = Environment.ExpandEnvironmentVariables(input), args = arguments;
@@ -47,7 +48,11 @@ internal sealed record ApplicationTarget(string? ProcessName, string? AppId, boo
         specific |= Directory.Exists(target) || target.StartsWith("shell:", StringComparison.OrdinalIgnoreCase);
         // An AppsFolder argument identifies an application, not an argument-specific document window.
         if (shellApplication || !string.IsNullOrWhiteSpace(appId) && process is null) specific = false;
-        return new(process, string.IsNullOrWhiteSpace(appId) ? null : appId, specific);
+        return new(process, string.IsNullOrWhiteSpace(appId) ? null : appId, specific)
+        {
+            ExecutablePath = Path.IsPathFullyQualified(target) && target.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
+                ? Path.GetFullPath(target) : null
+        };
     }
 
     private static string? UriProcess(string target)

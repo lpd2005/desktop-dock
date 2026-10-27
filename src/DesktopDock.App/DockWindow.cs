@@ -71,6 +71,7 @@ internal sealed class DockWindow : IDisposable
     private BitmapOverlay? ghost;
     private readonly TimedTransition returnMotion = new();
     private bool menuOpen;
+    private bool exitingApplication;
     private nint menuForChecks;
     public nint Handle => source.Handle;
     public bool HardwareRendering => renderer.HardwareRendering;
@@ -424,16 +425,14 @@ internal sealed class DockWindow : IDisposable
         nint menu = Native.CreatePopupMenu();
         if (menu == 0) return;
         var actions = new Dictionary<uint, Action>();
-        void Add(string title, Action action)
+        void Add(string title, Action action, bool enabled = true)
         {
             uint id = (uint)actions.Count + 1; actions[id] = action;
-            Native.AppendMenu(menu, 0, id, title);
+            Native.AppendMenu(menu, enabled ? 0u : 3u, id, title);
         }
         if (index >= 0 && index < entries.Count - 1)
         {
-            var item = entries[index];
-            Add("打开 " + item.Name, () => Launch(item, false));
-            Add("从 Dock 移除", () => RemoveEntry(item));
+            foreach (var itemAction in ItemMenuActions(entries[index])) Add(itemAction.Title, itemAction.Invoke, itemAction.Enabled);
             Native.AppendMenu(menu, 0x800, 0, null);
         }
         Add("添加应用或文件夹…", openSettings);
@@ -456,6 +455,52 @@ internal sealed class DockWindow : IDisposable
         }
         if (actions.TryGetValue(selected, out var action)) action();
         CheckVisibility();
+    }
+
+    private (string Title, Action Invoke, bool Enabled)[] ItemMenuActions(DockItem item)
+    {
+        var associated = launcher.WindowsFor(item);
+        nint foreground = Native.GetAncestor(Native.GetForegroundWindow(), 3);
+        nint closeWindow = associated.Windows.Contains(foreground) ? foreground : associated.Windows.FirstOrDefault();
+        Native.GetWindowThreadProcessId(closeWindow, out uint closeProcess);
+        var exit = launcher.CaptureExit(item);
+        return [
+            ("打开 " + item.Name, () => Launch(item, false), true),
+            ("关闭窗口", () => ApplicationExit.CloseWindow(closeWindow, closeProcess), closeWindow != 0),
+            ("退出应用…", () => _ = ExitApplication(item.Name, exit!), exit is not null && !exitingApplication),
+            ("从 Dock 移除", () => RemoveEntry(item), true)
+        ];
+    }
+
+    internal bool CloseFromMenuForChecks(DockItem item)
+    {
+        var actions = ItemMenuActions(item);
+        var close = actions.Single(x => x.Title == "关闭窗口");
+        bool enabled = close.Enabled && actions.Single(x => x.Title == "退出应用…").Enabled;
+        if (enabled) close.Invoke();
+        return enabled;
+    }
+
+    private async Task ExitApplication(string name, ApplicationExit exit)
+    {
+        if (exitingApplication || disposed) return;
+        exitingApplication = true;
+        try
+        {
+            var state = await exit.RequestNormalExit();
+            if (disposed || state == ApplicationExitState.Exited) return;
+            if (state == ApplicationExitState.AwaitingApplication)
+            {
+                nint window = exit.VisibleWindows().FirstOrDefault();
+                if (window != 0) Native.SetForegroundWindow(window);
+                return; // The user may be saving data or may have cancelled closing.
+            }
+            var result = System.Windows.MessageBox.Show("“" + name + "”仍在后台运行。是否结束它的后台进程？\n\n未保存的内容可能丢失。",
+                "退出应用", System.Windows.MessageBoxButton.YesNo, System.Windows.MessageBoxImage.Warning, System.Windows.MessageBoxResult.No);
+            if (result == System.Windows.MessageBoxResult.Yes && !exit.ForceBackgroundExit(true))
+                System.Windows.MessageBox.Show("应用可能出现了保存窗口，或当前权限无法结束它。请在应用中完成保存或使用其托盘退出菜单。", "退出应用");
+        }
+        finally { exitingApplication = false; CheckVisibility(); }
     }
 
     public void CheckVisibility()

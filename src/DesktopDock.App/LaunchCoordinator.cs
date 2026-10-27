@@ -96,6 +96,33 @@ internal sealed class LaunchCoordinator : IDisposable
 
     private void StopWatch() { timer.Stop(); previous.Clear(); pendingTarget = null; }
 
+    internal (List<nint> Windows, uint BoundProcess) WindowsFor(DockItem item)
+    {
+        string key = item.Target + "\n" + item.Arguments;
+        var target = ApplicationTarget.Resolve(item.Target, item.Arguments);
+        var windows = target.SpecificWindow ? new List<nint>() : Windows().Where(hwnd => Matches(hwnd, 0, target)).ToList();
+        uint process = 0;
+        if (bound.TryGetValue(key, out var cached) && Native.IsWindow(cached.Handle))
+        {
+            Native.GetWindowThreadProcessId(cached.Handle, out uint pid);
+            if (pid == cached.Process)
+            {
+                process = pid;
+                if (!windows.Contains(cached.Handle)) windows.Insert(0, cached.Handle);
+            }
+        }
+        windows.RemoveAll(hwnd => !ApplicationExit.CanCloseWindow(hwnd));
+        if (target.AppId is null && target.ExecutablePath is not null)
+            windows.RemoveAll(hwnd => !ApplicationExit.ExecutableMatchesWindow(hwnd, target.ExecutablePath));
+        return (windows, process);
+    }
+
+    internal ApplicationExit? CaptureExit(DockItem item)
+    {
+        var associated = WindowsFor(item);
+        return ApplicationExit.Capture(ApplicationTarget.Resolve(item.Target, item.Arguments), associated.Windows, associated.BoundProcess);
+    }
+
     internal static List<nint> Windows()
     {
         var result = new List<nint>();

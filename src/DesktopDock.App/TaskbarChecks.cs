@@ -157,7 +157,7 @@ internal static class TaskbarChecks
                 }
                 File.WriteAllText(Path.Combine(data, "taskbar-checks.json"), JsonSerializer.Serialize(new
                 {
-                    Version = "0.1.0-preview.9", Checks = checks, Motion = motionInfo, IdleCpuPercent = idleCpu, Workers = workers,
+                    Version = "0.1.0-preview.10", Checks = checks, Motion = motionInfo, IdleCpuPercent = idleCpu, Workers = workers,
                     WorkingSetMiB = ownProcess.WorkingSet64 / 1048576d,
                     Notes = "Actual primary top taskbar; controlled edge/menu state inputs, no synthetic mouse or key input. Glass process initialization is not pixel-level visual verification."
                 }, new JsonSerializerOptions { WriteIndented = true }));

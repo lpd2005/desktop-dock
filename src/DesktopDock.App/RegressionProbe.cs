@@ -21,6 +21,16 @@ internal static class RegressionProbe
         var window = new Window { Title = "Desktop Dock · 回归检查", Background = new SolidColorBrush(Color.FromRgb(230, 235, 244)),
             WindowStartupLocation = WindowStartupLocation.Manual, Width = 1000, Height = 700, ShowInTaskbar = true };
         int resizeEvents = 0;
+        bool allowClose = false;
+        window.Closing += (_, e) =>
+        {
+            WriteShared(Path.Combine(data, "close-request.json"), "{\"Received\":true}");
+            if (!allowClose && mode is "tray-close" or "save-close")
+            {
+                e.Cancel = true;
+                if (mode == "tray-close") window.Hide();
+            }
+        };
         // Cooperative test processes explicitly permit their parent to regain foreground.
         window.Activated += (_, _) => { if (allowForegroundProcess != 0) Native.AllowSetForegroundWindow(allowForegroundProcess); };
         void ApplyMode(string current)
@@ -47,6 +57,7 @@ internal static class RegressionProbe
             var source = HwndSource.FromHwnd(new WindowInteropHelper(window).Handle);
             source.AddHook((nint hwnd, int message, nint wparam, nint lparam, ref bool handled) =>
             {
+                if (message == 0x8009) { allowClose = true; app.Shutdown(); handled = true; }
                 if (message == 0x0005)
                 {
                     resizeEvents++;
@@ -75,6 +86,7 @@ internal static class RegressionProbe
         string appliedMode = mode;
         window.Loaded += (_, _) =>
         {
+            if (mode == "multiple") new Window { Title = "Desktop Dock · 第二个检查窗口", Width = 450, Height = 250 }.Show();
             window.Activate();
             WriteShared(Path.Combine(data, "ready.json"), JsonSerializer.Serialize(new { Mode = appliedMode, Ready = true, WindowHandle = (long)new WindowInteropHelper(window).Handle }));
         };
@@ -91,8 +103,8 @@ internal static class RegressionProbe
             WriteShared(Path.Combine(data, "ready.json"), JsonSerializer.Serialize(new { Mode = appliedMode, Ready = true, WindowHandle = (long)new WindowInteropHelper(window).Handle }));
         };
         modeTimer.Start();
-        var timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(60) };
-        timer.Tick += (_, _) => { timer.Stop(); modeTimer.Stop(); window.Close(); };
+        var timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(120) };
+        timer.Tick += (_, _) => { timer.Stop(); modeTimer.Stop(); allowClose = true; app.Shutdown(); };
         timer.Start();
         return app.Run(window);
     }
@@ -175,6 +187,6 @@ internal static class RegressionProbe
     {
         if (process.HasExited) return;
         process.Refresh();
-        if (process.MainWindowHandle != 0) Native.PostMessage(process.MainWindowHandle, 0x0010, 0, 0);
+        if (process.MainWindowHandle != 0) Native.PostMessage(process.MainWindowHandle, 0x8009, 0, 0);
     }
 }
