@@ -28,6 +28,35 @@ internal static class TaskbarChecks
                 await Task.Delay(1600);
                 enhancement.TickForChecks();
                 Require(!TaskbarNative.IsPresented((nint)before.Handle), "ActualTaskbarHidden");
+                enhancement.InputForChecks = null;
+                var belowEdge = new Native.Point { X = before.Frame.Left + (before.Frame.Right - before.Frame.Left) / 2,
+                    Y = before.Frame.Top + (before.Frame.Bottom - before.Frame.Top) / 2 };
+                enhancement.PointerForChecks = () => (belowEdge, true, false, false);
+                enhancement.TickForChecks(); await Task.Delay(350); enhancement.TickForChecks();
+                Require(!TaskbarNative.IsPresented((nint)before.Handle) && !enhancement.MotionActive,
+                    "ClickInHiddenTaskbarRectangleDoesNotReveal");
+                enhancement.PointerForChecks = () => (belowEdge, false, false, false);
+                enhancement.TickForChecks();
+                Require(!TaskbarNative.IsPresented((nint)before.Handle), "ReleaseBelowTopEdgeDoesNotReveal");
+                var nearEdge = belowEdge; nearEdge.Y = before.Monitor.Top + 3;
+                enhancement.PointerForChecks = () => (nearEdge, true, false, false);
+                enhancement.TickForChecks(); await Task.Delay(350); enhancement.TickForChecks();
+                Require(!TaskbarNative.IsPresented((nint)before.Handle), "ClickJustBelowTopEdgeDoesNotReveal");
+                var topEdge = belowEdge; topEdge.Y = before.Monitor.Top + 1;
+                enhancement.PointerForChecks = () => (topEdge, false, false, false);
+                enhancement.TickForChecks();
+                Require(!TaskbarNative.IsPresented((nint)before.Handle) && !enhancement.MotionActive, "RawBriefTopEdgeTouchDoesNotReveal");
+                await Task.Delay(550); enhancement.TickForChecks();
+                Require(TaskbarNative.IsPresented((nint)before.Handle), "RawTopEdgeDwellReveals");
+                enhancement.PointerForChecks = () => (belowEdge, false, false, false);
+                await Task.Delay(1000); enhancement.TickForChecks();
+                Require(TaskbarNative.IsPresented((nint)before.Handle), "ShownBarStillRetainsHover");
+                var belowBar = belowEdge; belowBar.Y = before.Frame.Bottom + 10;
+                enhancement.PointerForChecks = () => (belowBar, true, false, false);
+                await Task.Delay(1200); enhancement.TickForChecks();
+                Require(!TaskbarNative.IsPresented((nint)before.Handle), "ClickBelowShownBarDoesNotPreventHide");
+                enhancement.PointerForChecks = null;
+                enhancement.InputForChecks = () => (false, false, false, false);
                 var released = TaskbarNative.Capture()!;
                 Require(released.Frame == before.Frame, "NativeTaskbarNotMoved");
                 Require(!before.CanReleaseTop || released.Work == before.ExpandedWork, "TopWorkAreaReleased");
@@ -157,7 +186,7 @@ internal static class TaskbarChecks
                 }
                 File.WriteAllText(Path.Combine(data, "taskbar-checks.json"), JsonSerializer.Serialize(new
                 {
-                    Version = "0.1.0-preview.12", Checks = checks, Motion = motionInfo, IdleCpuPercent = idleCpu, Workers = workers,
+                    Version = "0.1.0-preview.13", Checks = checks, Motion = motionInfo, IdleCpuPercent = idleCpu, Workers = workers,
                     WorkingSetMiB = ownProcess.WorkingSet64 / 1048576d,
                     Notes = "Actual primary top taskbar; controlled edge/menu state inputs, no synthetic mouse or key input. Glass process initialization is not pixel-level visual verification."
                 }, new JsonSerializerOptions { WriteIndented = true }));

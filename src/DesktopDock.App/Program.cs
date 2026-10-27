@@ -469,7 +469,7 @@ internal sealed class Controller : IDisposable
             await Task.Delay(5000); process.Refresh();
             var report = new
             {
-                Version = "0.1.0-preview.12", dock.HardwareRendering, dock.HostBackdrop, dock.IconCount,
+                Version = "0.1.0-preview.13", dock.HardwareRendering, dock.HostBackdrop, dock.IconCount,
                 BottomEdgeReveals = true, EdgeLeaveHides = recallTimedOut, HoverKeepsVisible = interactionResetTimeout,
                 ContextMenuStaysOpen = menuStaysOpen,
                 VisibilityMotionChecks = visibilityMotionChecks,

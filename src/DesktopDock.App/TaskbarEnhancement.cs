@@ -29,6 +29,7 @@ internal sealed class TaskbarEnhancement : IDisposable
     internal int MotionFrames => motion?.Frames ?? 0;
     internal bool SlideUsed => motion?.SlideUsed == true;
     internal Func<(bool Edge, bool Over, bool Shell, bool Switching)>? InputForChecks { get; set; }
+    internal Func<(Native.Point Pointer, bool Down, bool Shell, bool Switching)>? PointerForChecks { get; set; }
 
     public TaskbarEnhancement(string data)
     {
@@ -131,12 +132,13 @@ internal sealed class TaskbarEnhancement : IDisposable
         if (!autoHide) return;
         if (!Native.GetCursorPos(out var point)) return;
         var snapshot = state.Snapshot;
-        bool edge = point.X >= snapshot.Monitor.Left && point.X < snapshot.Monitor.Right && point.Y >= snapshot.Monitor.Top && point.Y <= snapshot.Monitor.Top + 2;
-        bool over = TaskbarNative.Contains(snapshot.Frame, point);
-        bool shell = TaskbarNative.ShellInteraction(snapshot) || (over && TaskbarNative.Down(1));
-        if (motion?.Active == true && over && point.Y < snapshot.Frame.Top + (snapshot.Frame.Bottom - snapshot.Frame.Top) * motion.Progress)
-            shell = true;
+        bool down = TaskbarNative.Down(1), shellInteraction = TaskbarNative.ShellInteraction(snapshot);
         bool switching = TaskbarNative.Down(0x12) && (TaskbarNative.Down(9) || !TaskbarNative.Down(0x11));
+        if (PointerForChecks is not null)
+            (point, down, shellInteraction, switching) = PointerForChecks();
+        bool edge = TaskbarVisibility.AtTopEdge(snapshot.Monitor, point.X, point.Y);
+        bool over = TaskbarVisibility.OverVisibleBar(snapshot.Frame, motion?.Progress ?? 0, point.X, point.Y);
+        bool shell = shellInteraction || over && (down || motion?.Active == true);
         if (InputForChecks is not null) (edge, over, shell, switching) = InputForChecks();
         bool show = visibility.Update(now, edge, over, shell, switching);
         bool externallyChanged = motion is not null && show == motion.Target && !motion.Active && show != TaskbarNative.IsPresented((nint)snapshot.Handle);

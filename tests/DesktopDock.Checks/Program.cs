@@ -108,6 +108,21 @@ Check(!clicks.Complete("other", 1.2, 13, 10, .5, 4, 4), "Clock reversal cannot a
 clicks.Reset();
 Check(!clicks.Complete("app", 3, 10, 10, .5, 4, 4) && clicks.Complete("app", 3.5, 12, 12, .5, 4, 4), "System double-click boundary is inclusive");
 var taskbar = new TaskbarVisibility();
+var taskbarMonitor = new WindowBounds(100, 200, 2020, 1280);
+var taskbarFrame = new WindowBounds(100, 200, 2020, 272);
+Check(TaskbarVisibility.AtTopEdge(taskbarMonitor, 100, 200), "Topmost physical pixel can reveal the taskbar");
+Check(TaskbarVisibility.AtTopEdge(taskbarMonitor, 2019, 201), "Second edge pixel belongs to the monitor");
+Check(!TaskbarVisibility.AtTopEdge(taskbarMonitor, 100, 202), "Clicking below the two-pixel top edge does not count as edge dwell");
+Check(!TaskbarVisibility.AtTopEdge(taskbarMonitor, 99, 200) && !TaskbarVisibility.AtTopEdge(taskbarMonitor, 2020, 200), "Other monitors do not trigger the primary edge");
+Check(!TaskbarVisibility.AtTopEdge(taskbarMonitor, 100, 199), "Area above the monitor is not the edge");
+foreach (int y in new[] { 200, 201, 202, 236, 271, 272 })
+    Check(!TaskbarVisibility.OverVisibleBar(taskbarFrame, 0, 500, y), "A hidden taskbar has no hover or click retention area");
+Check(TaskbarVisibility.OverVisibleBar(taskbarFrame, .25, 500, 217), "Visible part of the sliding taskbar retains interaction");
+Check(!TaskbarVisibility.OverVisibleBar(taskbarFrame, .25, 500, 218), "Area below the sliding picture cannot summon it");
+Check(TaskbarVisibility.OverVisibleBar(taskbarFrame, .5, 500, 235) && !TaskbarVisibility.OverVisibleBar(taskbarFrame, .5, 500, 236), "Partial-height boundary matches the slide geometry");
+Check(TaskbarVisibility.OverVisibleBar(taskbarFrame, 1, 500, 271) && !TaskbarVisibility.OverVisibleBar(taskbarFrame, 1, 500, 272), "Fully shown taskbar uses its physical rectangle");
+Check(!TaskbarVisibility.OverVisibleBar(taskbarFrame, 1, 99, 210) && !TaskbarVisibility.OverVisibleBar(taskbarFrame, 1, 2020, 210), "Side boundaries do not retain the bar");
+Check(!TaskbarVisibility.OverVisibleBar(taskbarFrame, double.NaN, 500, 210), "Invalid animation progress never creates an input region");
 Check(!taskbar.Update(0, false, false, false, false), "Taskbar hides without an edge input surface");
 Check(!taskbar.Update(1, true, false, false, false), "Accidental edge touch does not reveal immediately");
 Check(taskbar.Update(1.2, true, false, false, false), "Sustained top-edge dwell reveals");
