@@ -150,7 +150,8 @@ internal sealed class Controller : IDisposable
         }
         if (preview) settings.TaskbarEnhancement = false;
         taskbar = new(data);
-        dock = new(settings, OpenSettings, DockChanged, Recover, Quit, toggleSettings: ToggleSettings);
+        dock = new(settings, OpenSettings, DockChanged, Recover, Quit, toggleSettings: ToggleSettings,
+            settingsHandle: () => settingsWindow is null ? 0 : new System.Windows.Interop.WindowInteropHelper(settingsWindow).Handle);
         dock.RestoreTaskbarRequested = RestoreTaskbar;
         tray = new Forms.NotifyIcon { Text = "Desktop Dock", Icon = System.Drawing.SystemIcons.Application, Visible = true };
         tray.DoubleClick += (_, _) => application.Dispatcher.Invoke(OpenSettings);
@@ -275,6 +276,7 @@ internal sealed class Controller : IDisposable
         }
         try
         {
+            dock.IsolateInputForChecks(true);
             await RegressionProbe.WaitReady(anchor, probeData);
             nint anchorWindow = RegressionProbe.Handle(probeData);
             testWindows.Add(anchorWindow);
@@ -283,6 +285,8 @@ internal sealed class Controller : IDisposable
             await dock.WaitUntilShownForChecks();
             Require(dock.IsDockVisible && dock.ExcludedFromAltTab, "Initial visibility or Alt+Tab exclusion failed.");
             var visibilityMotionChecks = await dock.CheckVisibilityMotion();
+            var appStateChecks = new Dictionary<string, bool>();
+            void StateCheck(bool value, string name) { appStateChecks[name] = value; Require(value, "Application status: " + name); }
 
             await RegressionProbe.SetMode(anchor, probeData, "covered");
             dock.RefreshOcclusion();
@@ -294,7 +298,7 @@ internal sealed class Controller : IDisposable
             Require(dock.IsDockVisible, "Dock disappeared during external drag.");
             dock.SetShellDragForChecks(new(false, false, false, new()));
             await Task.Delay(900); dock.CheckVisibility();
-            Require(!dock.IsDockVisible, "Coverage hiding did not resume after drag release.");
+            Require(!dock.IsDockVisible, "Coverage hiding did not resume after drag release: " + dock.VisibilityStateForChecks);
             dock.SetShellDragForChecks(null);
             dock.SetBottomEdgeForChecks(true);
             Require(!dock.IsDockVisible, "A brief bottom edge touch must not reveal Dock immediately.");
@@ -339,6 +343,7 @@ internal sealed class Controller : IDisposable
             bool settingsOverlapsDock = WindowAvoidance.Overlaps(WindowOcclusion.Frame(settingsHandle), WindowOcclusion.Frame(dock.Handle));
             bool settingsKeepsDockVisible = settingsOverlapsDock && dock.IsDockVisible;
             Require(settingsKeepsDockVisible, "Dock settings covering the Dock must not hide it.");
+            StateCheck(dock.SettingsStateForChecks == new DockAppState(true, true), "SettingsHasRunningAndActiveState");
             await RegressionProbe.SetMode(anchor, probeData, "covered");
             dock.RefreshOcclusion();
             bool otherWindowStillHides = !dock.IsDockVisible;
@@ -348,11 +353,13 @@ internal sealed class Controller : IDisposable
             dock.RefreshOcclusion(); await dock.WaitUntilShownForChecks();
             dock.InvokeSettingsEntry(); await Task.Delay(150);
             bool settingsMinimized = settingsWindow?.WindowState == WindowState.Minimized;
+            StateCheck(dock.SettingsStateForChecks == new DockAppState(true, false), "MinimizedSettingsKeepsRunningMarker");
             dock.InvokeSettingsEntry(); await Task.Delay(200);
             bool settingsRestored = settingsWindow is { IsVisible: true, WindowState: WindowState.Normal };
             Require(settingsExcluded && settingsMinimized && settingsRestored, "Settings taskbar toggle or Alt+Tab exclusion failed.");
             testWindows.Remove(settingsHandle);
             settingsWindow?.Close();
+            StateCheck(dock.SettingsStateForChecks == default, "ClosedSettingsRemovesRunningMarker");
 
             string host = Environment.ProcessPath!;
             string prefix = Path.GetFileNameWithoutExtension(host).Equals("dotnet", StringComparison.OrdinalIgnoreCase)
@@ -393,10 +400,12 @@ internal sealed class Controller : IDisposable
                 var originalFrame = WindowOcclusion.Frame(child);
                 await WaitFor(() => !dock.LaunchWatcherActive, "App identification watcher did not stop.");
                 Require(dock.LastAppWindow == child, "Wrong app window was associated.");
+                StateCheck(dock.AppStateForChecks(item) == new DockAppState(true, true), (shortcut ? "Shortcut" : "Executable") + "BoundWindowHasActiveState");
                 bool notMoved = WindowOcclusion.Frame(child) == originalFrame;
                 dock.ClickForCheck(item);
                 var action = dock.LastAppAction;
                 await WaitFor(() => Native.IsIconic(child), "Repeated active app click did not minimize: " + action);
+                StateCheck(dock.AppStateForChecks(item) == new DockAppState(true, false), (shortcut ? "Shortcut" : "Executable") + "MinimizedWindowHasRunningState");
                 dock.ClickForCheck(item);
                 bool restoring = dock.LastAppAction == AppClickAction.Restore;
                 await WaitFor(() => !Native.IsIconic(child), "App did not restore.");
@@ -448,6 +457,7 @@ internal sealed class Controller : IDisposable
                 await WaitFor(() => !Native.IsWindow(child), "Close-window menu action did not close the application window.");
                 applicationChecks[shortcut ? "ShortcutMenuClose" : "ExecutableMenuClose"] = menuClosed;
                 Require(menuClosed, "Close-window menu is missing or application-exit entry is still present.");
+                StateCheck(dock.AppStateForChecks(item) == default, (shortcut ? "Shortcut" : "Executable") + "ClosedWindowClearsBoundState");
                 testWindows.Remove(child);
                 Require(restoring && notMoved && activated, "Application regression: " + JsonSerializer.Serialize(new { Shortcut = shortcut, Restored = restoring, NoMove = notMoved, BackgroundActivated = activated, Action = dock.LastAppAction.ToString() }));
             }
@@ -455,7 +465,10 @@ internal sealed class Controller : IDisposable
             var browserChecks = await BrowserWindowChecks.Run(Path.Combine(probeData, "pre-existing-browser"));
             await RegressionProbe.SetMode(anchor, probeData, "normal");
             dock.RefreshOcclusion(); await dock.WaitUntilShownForChecks();
+            foreach (var check in await dock.CheckAppStatePresentation()) appStateChecks[check.Key] = check.Value;
+            await dock.WaitUntilShownForChecks();
             var dragChecks = await dock.CheckDragging(Path.Combine(data, "drag-checks"));
+            dock.SetBottomEdgeForChecks(false); dock.SetPointerOverForChecks(false);
             dock.ClearFrameSamples();
             for (int i = 0; i < 180; i++) { dock.PreviewWave(.5 + Math.Sin(i * .045) * .42); await Task.Delay(8); }
             var hoveredInput = dock.VerifyInputRegion();
@@ -474,19 +487,20 @@ internal sealed class Controller : IDisposable
                 await RegressionProbe.SetMode(anchor, probeData, "normal");
                 dock.RefreshOcclusion(); await dock.WaitUntilShownForChecks();
             }
-            Require(avoidance.Values.All(x => x) && dock.IsDockVisible, "Coverage, fullscreen or stable reveal regression.");
+            Require(avoidance.Values.All(x => x) && dock.IsDockVisible, "Coverage, fullscreen or stable reveal regression: "
+                + JsonSerializer.Serialize(avoidance) + " " + dock.VisibilityStateForChecks);
             process.Refresh(); var initialCpu = process.TotalProcessorTime; var watch = Stopwatch.StartNew();
             await Task.Delay(5000); process.Refresh();
             var report = new
             {
-                Version = "0.1.0-preview.14", dock.HardwareRendering, dock.HostBackdrop, dock.IconCount,
+                Version = "0.1.0-preview.15", dock.HardwareRendering, dock.HostBackdrop, dock.IconCount,
                 BottomEdgeReveals = true, EdgeLeaveHides = recallTimedOut, HoverKeepsVisible = interactionResetTimeout,
                 ContextMenuStaysOpen = menuStaysOpen,
                 VisibilityMotionChecks = visibilityMotionChecks,
                 DockExcludedFromAltTab = dock.ExcludedFromAltTab, SettingsExcludedFromAltTab = settingsExcluded, NoTaskSwitchFlash = noImmediateFlash,
                 SettingsOpened = settingsOpened, SettingsMinimized = settingsMinimized, SettingsRestored = settingsRestored,
                 SettingsKeepsDockVisible = settingsKeepsDockVisible, OtherWindowStillHides = otherWindowStillHides,
-                ApplicationChecks = applicationChecks, ClickHoverChecks = clickHoverChecks, BrowserChecks = browserChecks, Avoidance = avoidance,
+                ApplicationChecks = applicationChecks, ClickHoverChecks = clickHoverChecks, BrowserChecks = browserChecks, AppStateChecks = appStateChecks, Avoidance = avoidance,
                 DragChecks = dragChecks,
                 InputRegion = input, HoveredInputRegion = hoveredInput,
                 IdleCpuPercent = (process.TotalProcessorTime - initialCpu).TotalMilliseconds / watch.Elapsed.TotalMilliseconds / Environment.ProcessorCount * 100,
@@ -499,6 +513,7 @@ internal sealed class Controller : IDisposable
         }
         finally
         {
+            dock.IsolateInputForChecks(false);
             foreach (nint child in children) if (Native.IsWindow(child)) Native.PostMessage(child, 0x0010, 0, 0);
             RegressionProbe.Close(anchor);
         }

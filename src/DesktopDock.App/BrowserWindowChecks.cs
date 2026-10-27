@@ -45,29 +45,44 @@ internal static class BrowserWindowChecks
                 var target = ApplicationTarget.Resolve(item.Target, item.Arguments);
                 Require(!target.SpecificWindow && target.ExecutablePath == browser, prefix + "MetadataKeepsApplicationIdentity");
                 using var launcher = new LaunchCoordinator(); // Created after the window; no launch/binding history.
+                Require(launcher.GetStates([item], window)[0] == new DockAppState(true, true), prefix + "PreExistingWindowHasActiveRunningState");
                 launcher.Launch(item, foregroundAtPress: 0, allowLaunch: false);
                 Require(launcher.LastWindow == window && launcher.LastAction == AppClickAction.Activate && !launcher.IsWatching,
                     prefix + "SingleClickActivatesPreExistingWindow");
                 launcher.Launch(item, foregroundAtPress: window, allowLaunch: false);
                 await WaitFor(() => Native.IsIconic(window), prefix + "RepeatClickMinimizesSameWindow");
+                Require(launcher.GetStates([item], window)[0] == new DockAppState(true, false), prefix + "MinimizedWindowKeepsRunningState");
                 using var restartedDock = new LaunchCoordinator();
                 restartedDock.Launch(item, allowLaunch: true);
                 Require(restartedDock.LastWindow == window && restartedDock.LastAction == AppClickAction.Restore && !restartedDock.IsWatching,
                     prefix + "FreshCoordinatorRestoresSameWindow");
                 await WaitFor(() => !Native.IsIconic(window), prefix + "RestoredWindowIsVisible");
+                Require(restartedDock.GetStates([item], 0)[0] == new DockAppState(true, false), prefix + "BackgroundWindowKeepsRunningState");
                 restartedDock.Launch(item, toggle: false, allowLaunch: true);
                 Require(restartedDock.LastWindow == window && restartedDock.LastAction == AppClickAction.Activate && !restartedDock.IsWatching,
                     prefix + "OpenExistingNeverStartsAnotherProcess");
                 Require(!launcher.Matches(window, 0, target with { ExecutablePath = Path.Combine(data, "other-install", "chrome.exe") }),
                     prefix + "OtherInstallationIsNotMatched");
+                Require(!launcher.GetStates([new("Other installation", Path.Combine(data, "other-install", "chrome.exe"))], window)[0].Running,
+                    prefix + "OtherInstallationHasNoRunningMarker");
             }
             foreach (var (name, specific) in new[] { ("Url", "https://example.invalid/"), ("Profile", "--profile-directory=\"Example Profile\""), ("WebApp", "--app-id=example") })
             {
                 using var launcher = new LaunchCoordinator();
                 launcher.Launch(new("Example specific entry", browser, metadata + " " + specific), allowLaunch: false);
                 Require(launcher.LastAction == AppClickAction.Ignore && !launcher.IsWatching, name + "EntryDoesNotSelectUnrelatedWindow");
+                Require(!launcher.GetStates([new("Example specific entry", browser, metadata + " " + specific)], window)[0].Running,
+                    name + "UnboundEntryHasNoRunningMarker");
             }
             Require(!process.HasExited && Native.IsWindow(window), "OriginalBrowserFixtureRemainsRunning");
+            using var status = new LaunchCoordinator();
+            var plain = new DockItem("Example browser", browser);
+            Native.ShowWindowAsync(window, 0);
+            await WaitFor(() => !Native.IsWindowVisible(window), "FixtureCanHideItsMainWindow");
+            Require(status.GetStates([plain], window)[0] == new DockAppState(true, false), "HiddenMainWindowKeepsRunningMarker");
+            Native.PostMessage(window, 0x0010, 0, 0);
+            await WaitFor(() => !Native.IsWindow(window), "FixtureClosesForStatusCheck");
+            Require(status.GetStates([plain], 0)[0] == default, "ClosedWindowRemovesRunningMarker");
         }
         finally { RegressionProbe.Close(process); }
         return checks;

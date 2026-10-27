@@ -18,6 +18,22 @@ internal sealed class LaunchCoordinator : IDisposable
     private double started;
     private nint launchForeground;
     private readonly Func<nint, string?> readAppId;
+    // One refresh shares identity reads across every pinned entry, then discards
+    // them so a reused PID or changed window identity cannot leave stale state.
+    private sealed class MatchSnapshot(Func<nint, string?> readAppId)
+    {
+        private readonly Dictionary<uint, string?> names = [];
+        private readonly Dictionary<uint, string?> paths = [];
+        private readonly Dictionary<nint, string?> appIds = [];
+        public string? Name(uint pid) => Read(names, pid, () => ProcessValue(pid, false));
+        public string? Path(uint pid) => Read(paths, pid, () => ProcessValue(pid, true));
+        public string? AppId(nint window) => Read(appIds, window, () => readAppId(window));
+        private static string? Read<T>(Dictionary<T, string?> cache, T key, Func<string?> read) where T : notnull
+        {
+            if (!cache.TryGetValue(key, out var value)) cache[key] = value = read();
+            return value;
+        }
+    }
     public bool IsWatching => timer.IsEnabled;
     public AppClickAction LastAction { get; private set; }
     public nint LastWindow { get; private set; }
@@ -32,8 +48,7 @@ internal sealed class LaunchCoordinator : IDisposable
     public void Launch(DockItem item, bool toggle = true, nint? foregroundAtPress = null, bool allowLaunch = true)
     {
         string key = item.Target + "\n" + item.Arguments;
-        if (targets.Count > 100) { targets.Clear(); bound.Clear(); }
-        if (!targets.TryGetValue(key, out var info)) targets[key] = info = ApplicationTarget.Resolve(item.Target, item.Arguments);
+        var info = ResolveTarget(item);
         var windows = Windows();
         nint foreground = foregroundAtPress ?? Native.GetAncestor(Native.GetForegroundWindow(), 3);
         nint cached = 0;
@@ -96,10 +111,49 @@ internal sealed class LaunchCoordinator : IDisposable
 
     private void StopWatch() { timer.Stop(); previous.Clear(); pendingTarget = null; }
 
+    private ApplicationTarget ResolveTarget(DockItem item)
+    {
+        string key = item.Target + "\n" + item.Arguments;
+        if (targets.Count > 100) { targets.Clear(); bound.Clear(); }
+        if (!targets.TryGetValue(key, out var target)) targets[key] = target = ApplicationTarget.Resolve(item.Target, item.Arguments);
+        return target;
+    }
+
+    internal DockAppState[] GetStates(IReadOnlyList<DockItem> items, nint? foregroundWindow = null)
+    {
+        var windows = Windows(includeHidden: true).Where(WindowClose.CanClose).ToArray();
+        var snapshot = new MatchSnapshot(readAppId);
+        nint foreground = foregroundWindow ?? Native.GetAncestor(Native.GetForegroundWindow(), 3);
+        var result = new DockAppState[items.Count];
+        for (int i = 0; i < items.Count; i++)
+        {
+            var item = items[i];
+            if (item.Target.StartsWith("dock:", StringComparison.OrdinalIgnoreCase)) continue;
+            var info = ResolveTarget(item);
+            bool running = false, active = false;
+            string key = item.Target + "\n" + item.Arguments;
+            bound.TryGetValue(key, out var cached);
+            foreach (nint window in windows)
+            {
+                bool associated = false;
+                if (cached is not null && window == cached.Handle)
+                {
+                    Native.GetWindowThreadProcessId(window, out uint pid);
+                    associated = pid == cached.Process;
+                }
+                if (!associated && (info.SpecificWindow || !Matches(window, 0, info, snapshot))) continue;
+                running = true;
+                active |= window == foreground && Native.IsWindowVisible(window) && !Native.IsIconic(window);
+            }
+            result[i] = new(running, active);
+        }
+        return result;
+    }
+
     internal List<nint> WindowsFor(DockItem item)
     {
         string key = item.Target + "\n" + item.Arguments;
-        var target = ApplicationTarget.Resolve(item.Target, item.Arguments);
+        var target = ResolveTarget(item);
         var windows = target.SpecificWindow ? new List<nint>() : Windows().Where(hwnd => Matches(hwnd, 0, target)).ToList();
         if (bound.TryGetValue(key, out var cached) && Native.IsWindow(cached.Handle))
         {
@@ -115,15 +169,15 @@ internal sealed class LaunchCoordinator : IDisposable
         return windows;
     }
 
-    internal static List<nint> Windows()
+    internal static List<nint> Windows(bool includeHidden = false)
     {
         var result = new List<nint>();
         Native.EnumWindows((hwnd, _) =>
         {
-            if (!Native.IsWindowVisible(hwnd) || Native.GetWindow(hwnd, 4) != 0) return true;
+            if ((!includeHidden && !Native.IsWindowVisible(hwnd)) || Native.GetWindow(hwnd, 4) != 0) return true;
             Native.GetWindowThreadProcessId(hwnd, out uint pid);
             if (pid == Environment.ProcessId) return true;
-            if (Native.DwmGetIntAttribute(hwnd, 14, out int cloaked, sizeof(int)) == 0 && cloaked != 0) return true;
+            if (!includeHidden && Native.DwmGetIntAttribute(hwnd, 14, out int cloaked, sizeof(int)) == 0 && cloaked != 0) return true;
             long style = Native.GetWindowLongPtr(hwnd, -20).ToInt64();
             if ((style & (0x80 | 0x08000000)) != 0) return true;
             Native.GetWindowRect(hwnd, out var rect);
@@ -134,23 +188,31 @@ internal sealed class LaunchCoordinator : IDisposable
     }
 
     internal bool Matches(nint hwnd, uint expectedPid, ApplicationTarget? info)
+        => Matches(hwnd, expectedPid, info, null);
+
+    private bool Matches(nint hwnd, uint expectedPid, ApplicationTarget? info, MatchSnapshot? snapshot)
     {
         Native.GetWindowThreadProcessId(hwnd, out uint pid);
         if (pid == Environment.ProcessId) return false;
         if (expectedPid != 0 && pid == expectedPid) return true;
         if (info is null) return false;
         if (LaunchArguments.IsChromiumBrowser(info.ProcessName) && info.ExecutablePath is not null
-            && !WindowClose.ExecutableMatches(hwnd, info.ExecutablePath)) return false;
+            && !string.Equals(snapshot is null ? ProcessValue(pid, true) : snapshot.Path(pid), info.ExecutablePath, StringComparison.OrdinalIgnoreCase)) return false;
         if (info.AppId is not null)
         {
-            string? id = readAppId(hwnd);
+            string? id = snapshot is null ? readAppId(hwnd) : snapshot.AppId(hwnd);
             if (!string.IsNullOrEmpty(id)) return info.AppId.Equals(id, StringComparison.OrdinalIgnoreCase);
             // Never fall back to the shell's process name for an app activation shortcut.
             if (info.ProcessName == "explorer" || info.AppId.Contains('!')) return false;
         }
         if (info.ProcessName is null) return false;
-        try { using var process = Process.GetProcessById((int)pid); return info.ProcessName.Equals(process.ProcessName, StringComparison.OrdinalIgnoreCase); }
-        catch (Exception e) when (e is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception) { return false; }
+        return info.ProcessName.Equals(snapshot is null ? ProcessValue(pid, false) : snapshot.Name(pid), StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string? ProcessValue(uint pid, bool path)
+    {
+        try { using var process = Process.GetProcessById((int)pid); return path ? process.MainModule?.FileName : process.ProcessName; }
+        catch (Exception e) when (e is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception) { return null; }
     }
 
     public void Dispose() => StopWatch();

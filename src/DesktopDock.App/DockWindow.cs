@@ -20,6 +20,7 @@ internal sealed class DockWindow : IDisposable
     private readonly DockSettings settings;
     private readonly Action openSettings, changed, recover, quit;
     private readonly Action<nint?> toggleSettings;
+    private readonly Func<nint> settingsHandle;
     private readonly LaunchCoordinator launcher;
     private readonly WindowOcclusion occlusion;
     private readonly DockDropTarget dropTarget;
@@ -44,6 +45,10 @@ internal sealed class DockWindow : IDisposable
     private bool tracking, autoHidden, disposed, rendering, eventPending;
     private bool blocked = true, occlusionDirty = true, cachedOccluded;
     private double lastOcclusionScan;
+    private bool appStatesDirty = true;
+    private double lastAppStateScan = double.NegativeInfinity;
+    private int appStateScans;
+    private bool? stateRefreshForChecks;
     private bool? switchingForChecks;
     private Native.Point lastMouse;
     private bool syntheticHover;
@@ -65,6 +70,7 @@ internal sealed class DockWindow : IDisposable
     private nint? pressedForeground;
     private bool dragging, returning, sortingSettles, externalDrop, suppressHover, systemDragging;
     private bool checkingInteraction;
+    private bool isolatingInputForChecks;
     private bool dispatchingCheckMouse;
     private Action? dragStartInterruptionForChecks;
     private int dragFrom = -1, dragTo = -1, ghostIndex = -1, insertion = -1;
@@ -86,12 +92,22 @@ internal sealed class DockWindow : IDisposable
     public bool IsDockVisible => !blocked && !autoHidden && Native.IsWindowVisible(Handle) && Native.IsWindowVisible(visualSource.Handle);
     internal AppClickAction LastAppAction => launcher.LastAction;
     internal nint LastAppWindow => launcher.LastWindow;
+    internal string VisibilityStateForChecks => System.Text.Json.JsonSerializer.Serialize(new
+    {
+        blocked, autoHidden, cachedOccluded, CoveredNow = occlusion.Covered(RestDockArea),
+        motion.Target, motion.Active, motion.Progress, pressedIndex, dragging, returning, externalDrop,
+        ShellDragging = shellDrag.Active, systemDragging, pendingDropGeneration, menuOpen,
+        DropProtected = clock.Elapsed.TotalSeconds < dropVisibleUntil, visibility.IsTemporarilyShown,
+        PointerOver = IsPointerOverDock()
+    });
 
-    public DockWindow(DockSettings settings, Action openSettings, Action changed, Action recover, Action quit, Action<nint?>? toggleSettings = null)
+    public DockWindow(DockSettings settings, Action openSettings, Action changed, Action recover, Action quit,
+        Action<nint?>? toggleSettings = null, Func<nint>? settingsHandle = null)
     {
         this.settings = settings; this.openSettings = openSettings; this.changed = changed;
         this.recover = recover; this.quit = quit;
         this.toggleSettings = toggleSettings ?? (_ => openSettings());
+        this.settingsHandle = settingsHandle ?? (() => 0);
         launcher = new();
         source = new HwndSource(new HwndSourceParameters("Desktop Dock")
         {
@@ -132,7 +148,9 @@ internal sealed class DockWindow : IDisposable
                 source.Dispatcher.BeginInvoke(CheckVisibility);
                 return;
             }
-            if (disposed || hwnd == Handle || objectId != 0 || eventPending) return;
+            if (disposed || objectId != 0) return;
+            if (eventType != 0x800B) appStatesDirty = true;
+            if (hwnd == Handle || eventPending) return;
             Native.GetWindowThreadProcessId(hwnd, out uint eventProcess);
             if (eventProcess == Environment.ProcessId && (Native.GetWindowLongPtr(hwnd, -16).ToInt64() & 0x00C00000) == 0) return;
             occlusionDirty = true;
@@ -169,7 +187,7 @@ internal sealed class DockWindow : IDisposable
             var nextGeometry = DockLayout.Calculate(localEntries.Length, settings.IconSize, settings.Magnification, null, width / scale, separatorBefore: nextSeparator);
             renderer.SynchronizeIcons(entries, localEntries, pixels, nextGeometry, width, height, scale);
             entries = localEntries.ToList(); separatorBefore = nextSeparator;
-            occlusionDirty = true;
+            occlusionDirty = appStatesDirty = true;
             RenderLayout();
             CheckVisibility();
         }
@@ -246,7 +264,7 @@ internal sealed class DockWindow : IDisposable
         active |= hover.Step(present ? 1 : 0, dt, present ? 36 : 29);
         if (settings.ReducedMotion) { pointer.Reset(pointerTarget); hover.Reset(present ? 1 : 0); active = false; }
         RenderLayout(dt);
-        active |= renderer.OrderingActive || renderer.PressFeedbackActive;
+        active |= renderer.OrderingActive || renderer.PressFeedbackActive || renderer.StateAnimationActive;
         if (sortingSettles && !renderer.OrderingActive) sortingSettles = false;
         active |= UpdateGhost(now);
         active |= pressedIndex >= 0 || dragging;
@@ -266,7 +284,7 @@ internal sealed class DockWindow : IDisposable
 
     private void TrackPressedPointer()
     {
-        if (checkingInteraction || pressedIndex < 0) return;
+        if (checkingInteraction || isolatingInputForChecks || pressedIndex < 0) return;
         if (Native.GetAsyncKeyState(0x1B) < 0) { CancelInteraction(); return; }
         Native.GetCursorPos(out var cursor); Native.ScreenToClient(Handle, ref cursor);
         int button = Native.GetSystemMetrics(23) != 0 ? 0x02 : 0x01;
@@ -291,7 +309,7 @@ internal sealed class DockWindow : IDisposable
 
     private nint Message(nint hwnd, int msg, nint wparam, nint lparam, ref bool handled)
     {
-        if (checkingInteraction && !dispatchingCheckMouse && msg is >= 0x0200 and <= 0x020E)
+        if ((checkingInteraction || isolatingInputForChecks) && !dispatchingCheckMouse && msg is >= 0x0200 and <= 0x020E)
         { handled = true; return 0; }
         int x = unchecked((short)(long)lparam), y = unchecked((short)((long)lparam >> 16));
         switch (msg)
@@ -530,8 +548,29 @@ internal sealed class DockWindow : IDisposable
             return;
         }
         blocked = autoHidden = false;
+        RefreshAppStates(now, force: !wasTarget);
         if (!wasTarget) RenderLayout();
         motion.Request(true, settings.ReducedMotion);
+    }
+
+    private DockAppState[] ReadAppStates()
+    {
+        nint foreground = Native.GetAncestor(Native.GetForegroundWindow(), 3);
+        var states = launcher.GetStates(entries, foreground);
+        nint settingsWindow = settingsHandle();
+        int index = entries.FindIndex(x => x.Target == "dock:settings");
+        if (index >= 0 && settingsWindow != 0 && Native.IsWindow(settingsWindow))
+            states[index] = new(true, settingsWindow == foreground && !Native.IsIconic(settingsWindow));
+        return states;
+    }
+
+    private void RefreshAppStates(double now, bool force = false)
+    {
+        if (stateRefreshForChecks == false || !force && now - lastAppStateScan < (appStatesDirty ? .15 : 2)) return;
+        appStatesDirty = false; lastAppStateScan = now; appStateScans++;
+        if (!renderer.SetAppStates(ReadAppStates())) return;
+        RenderLayout();
+        if (!settings.ReducedMotion) StartRendering();
     }
 
     public void Summon()
@@ -541,7 +580,7 @@ internal sealed class DockWindow : IDisposable
         CheckVisibility();
     }
     private void NoteInteraction() => visibility.Interact(clock.Elapsed.TotalSeconds);
-    public void RefreshOcclusion() { occlusionDirty = true; CheckVisibility(); }
+    public void RefreshOcclusion() { occlusionDirty = appStatesDirty = true; CheckVisibility(); }
 
     private WindowBounds RestDockArea
     {
@@ -716,6 +755,75 @@ internal sealed class DockWindow : IDisposable
     {
         if (!settings.Items.Contains(item)) { settings.Items.Add(item); await LoadIcons(); }
     }
+    internal DockAppState AppStateForChecks(DockItem item)
+    {
+        RefreshAppStates(clock.Elapsed.TotalSeconds, force: true);
+        return renderer.StateForChecks(entries.IndexOf(item)).State;
+    }
+    internal DockAppState SettingsStateForChecks => AppStateForChecks(entries.Single(x => x.Target == "dock:settings"));
+
+    internal async Task<Dictionary<string, bool>> CheckAppStatePresentation()
+    {
+        var checks = new Dictionary<string, bool>();
+        void Require(bool value, string name)
+        {
+            checks[name] = value;
+            if (!value) throw new InvalidOperationException("App state presentation: " + name);
+        }
+        bool? oldVisibility = visibilityForChecks, oldRefresh = stateRefreshForChecks, oldPointer = pointerOverForChecks;
+        bool oldSuppression = suppressHover;
+        try
+        {
+            stateRefreshForChecks = false; visibilityForChecks = true; pointerOverForChecks = false; suppressHover = true;
+            CancelInteraction(); hover.Reset(0); pointer.Reset(pointerTarget);
+            await WaitUntilShownForChecks();
+            var states = new DockAppState[entries.Count];
+            void Present() { renderer.SetAppStates(states); RenderLayout(); StartRendering(); }
+            Present(); await Task.Delay(250);
+            Require(!renderer.StateForChecks(0).Visible && renderer.StateForChecks(0).BackgroundOpacity == 0, "ClosedHasNoMarkerOrBackground");
+            var identities = renderer.IconIdentities.ToArray();
+            states[0] = new(true, false); Present(); await Task.Delay(230);
+            var running = renderer.StateForChecks(0);
+            Require(running.Visible && Math.Abs(running.Width / scale - 3.5) < .01, "RunningUsesSmallDot");
+            Require(running.BackgroundOpacity > .06f && running.BackgroundOpacity < .08f, "RunningHasSubtleBackground");
+            states[0] = new(true, true); Present(); await Task.Delay(55);
+            var middle = renderer.StateForChecks(0);
+            Require(middle.Width > running.Width && middle.Width < 14 * scale && renderer.StateAnimationActive, "ActiveMarkerTransitionsSmoothly");
+            await Task.Delay(230);
+            var active = renderer.StateForChecks(0);
+            Require(Math.Abs(active.Width / scale - 14) < .01 && active.BackgroundOpacity > .29, "ActiveUsesPillAndStrongerBackground");
+            Require(!renderer.StateAnimationActive && !rendering, "SettledStateStopsAnimationClock");
+            Require(renderer.IconIdentities.SequenceEqual(identities), "StatusDoesNotRecreateIconSurfaces");
+            renderer.Layout(geometry, width, height, scale, hidden: 0);
+            Require(!renderer.StateForChecks(0).Visible, "DraggedSourceHidesMarker");
+            RenderLayout();
+            renderer.MoveIcon(0, 1); RenderLayout();
+            Require(renderer.StateForChecks(1).State == states[0] && renderer.IconIdentities[1] == identities[0], "StateFollowsReorderedIcon");
+            renderer.MoveIcon(1, 0); RenderLayout();
+            await LoadIcons();
+            Require(renderer.IconIdentities.SequenceEqual(identities) && renderer.StateForChecks(0).State == states[0], "ReloadRetainsStateAndSurfaces");
+            states[0] = new(true, false); Present(); await Task.Delay(230);
+            Require(renderer.StateForChecks(0).Visible && renderer.StateForChecks(0).Width < active.Width, "InactiveRetainsRunningMarker");
+            renderer.SetTheme(new DockSettings { Reflections = settings.Reflections, ReducedMotion = true });
+            states[0] = new(true, true); Present();
+            Require(!renderer.StateAnimationActive && Math.Abs(renderer.StateForChecks(0).Width / scale - 14) < .01, "ReducedMotionChangesImmediately");
+            states[0] = default; Present();
+            Require(!renderer.StateForChecks(0).Visible && renderer.StateForChecks(0).BackgroundOpacity == 0, "ClosingRemovesMarkerAndBackground");
+            renderer.SetTheme(settings);
+            stateRefreshForChecks = oldRefresh;
+            visibilityForChecks = false; CheckVisibility();
+            int scans = appStateScans;
+            await Task.Delay(400); CheckVisibility();
+            Require(appStateScans == scans, "HiddenDockDoesNotScanAppStates");
+        }
+        finally
+        {
+            renderer.SetTheme(settings); stateRefreshForChecks = oldRefresh; visibilityForChecks = oldVisibility;
+            pointerOverForChecks = oldPointer; suppressHover = oldSuppression; appStatesDirty = true;
+            CheckVisibility();
+        }
+        return checks;
+    }
     internal void ClickForCheck(DockItem item, Action? betweenPressAndRelease = null, bool nativeDoubleClick = false)
     {
         int index = entries.IndexOf(item);
@@ -873,6 +981,7 @@ internal sealed class DockWindow : IDisposable
         return checks;
     }
     internal void UseOcclusionWindowsForChecks(Func<IEnumerable<nint>> source) { occlusion.WindowsForChecks = source; RefreshOcclusion(); }
+    internal void IsolateInputForChecks(bool enabled) => isolatingInputForChecks = enabled;
     internal void SetSwitchingForChecks(bool? value) { switchingForChecks = value; CheckVisibility(); }
     internal void InteractForChecks() => NoteInteraction();
     internal void SetBottomEdgeForChecks(bool? value) { bottomEdgeForChecks = value; CheckVisibility(); }
