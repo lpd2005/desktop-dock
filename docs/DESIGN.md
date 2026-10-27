@@ -1,6 +1,6 @@
 # Dock 交互与当前实现
 
-当前以 0.1.0-preview.10 为准。preview.2 的启动动效和窗口位置调整已按用户要求移除。
+当前以 0.1.0-preview.11 为准。preview.2 的启动动效和窗口位置调整已按用户要求移除。
 
 ## 显示、遮挡与召回
 
@@ -39,19 +39,17 @@ EXE、快捷方式目标、应用 URI、应用标识和本次启动窗口用于�
 
 多窗口应用当前处理活动或最近关联的窗口；完整缩略图选择仍属后续范围。自定义启动代理、权限受限程序和特殊窗口需要继续兼容验证。无法可靠识别时保留双击启动，不猜测操作其他应用。
 
-通过 ShowWindowAsync 最小化 / 恢复，保留应用内容；应用启动和切换不关闭或移动外部窗口。只有主动选择关闭 / 退出时才请求关闭应用。用户主动开启的任务栏增强管理原生任务栏及其顶部预留工作区。
+通过 ShowWindowAsync 最小化 / 恢复，保留应用内容；应用启动和切换不关闭或移动外部窗口。只有主动选择“关闭窗口”时才请求关闭对应窗口。用户主动开启的任务栏增强管理原生任务栏及其顶部预留工作区。
 
 依据：[ShowWindowAsync](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-showwindowasync)、[AppUserModel.ID](https://learn.microsoft.com/en-us/windows/win32/properties/props-system-appusermodel-id)、[GetApplicationUserModelId](https://learn.microsoft.com/en-us/windows/win32/api/appmodel/nf-appmodel-getapplicationusermodelid)、[GetDoubleClickTime](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getdoubleclicktime)。
 
-## 右键关闭与退出
+## 右键关闭窗口
 
-应用图标提供“关闭窗口”和“退出应用…”。关闭窗口处理当前活动或最近关联窗口，通过 WM_CLOSE 交给应用自己的保存 / 取消逻辑。退出应用先对已识别应用的可见顶层窗口请求正常关闭，异步等待约 900 ms；进程已退出则结束，仍有窗口则交还应用处理。窗口全部收起但进程仍在后台时，才显示结束后台进程的确认，默认选择“否”。确认期间如果应用重新出现可见窗口，也不强制结束。
+应用图标提供“关闭窗口”和“从 Dock 移除”。关闭窗口处理当前活动或最近关联窗口，通过 WM_CLOSE 交给应用自己的保存 / 取消逻辑。未运行或无法关联窗口时置灰。按用户要求已删除“退出应用…”菜单、后台结束确认、进程枚举和强制结束实现；应用自身的托盘退出行为由应用管理。
 
-退出范围使用菜单创建时的进程快照。普通 EXE / 快捷方式按完整可执行文件路径关联，商店应用按进程包标识关联；带文档参数的入口只处理本次已关联的进程。确认后重新核对 PID、进程创建时间、完整路径和关键进程状态，并在同一个内核句柄上执行结束，不递归终止任意子进程。新启动的实例不加入旧菜单的操作。
+普通 EXE / 快捷方式通过完整路径校验已匹配窗口，商店应用使用应用标识；带文档参数的入口优先使用本次已关联的窗口。发出关闭消息前再次核对窗口和 PID。桌面、任务栏和 Dock 自身不作为外部窗口关闭目标。
 
-Explorer、桌面、任务栏、Shell 宿主、Dock 自身和恢复守护进程不作为应用进程退出目标。文件夹可关闭已经关联的窗口，不能结束 Explorer；未运行或无法可靠识别的退出操作置灰。关联仅在右键 / 退出时检查，不增加空闲轮询。此功能没有转发托盘私有的退出命令；应用有特殊退出清理或权限受限时，仍需使用其自身菜单。
-
-依据：[WM_CLOSE](https://learn.microsoft.com/en-us/windows/win32/winmsg/wm-close)、[IsProcessCritical](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-isprocesscritical)、[TerminateProcess](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-terminateprocess)。
+依据：[WM_CLOSE](https://learn.microsoft.com/en-us/windows/win32/winmsg/wm-close)。
 
 ## Alt+Tab 闪现修复
 
