@@ -4,14 +4,15 @@ public readonly record struct PreviewRectangle(double X, double Y, double Width,
 
 public readonly record struct WindowPreviewLayout(int Capacity, double CardWidth, double ImageHeight)
 {
-    public const double Padding = 16, Gap = 12, Header = 32, Title = 32;
-    public double Height => Padding * 2 + Header + Title + ImageHeight;
+    public const double Padding = 16, Gap = 6, Header = 24, Title = 32, ItemPadding = 8;
+    public double Height => HeightFor(true);
+    public double HeightFor(bool paged) => Padding * 2 + ItemPadding * 2 + (paged ? Header : 0) + Title + ImageHeight;
     public double Width(int visibleCount) => Padding * 2 + visibleCount * CardWidth + Math.Max(0, visibleCount - 1) * Gap;
     public static WindowPreviewLayout Calculate(double availableWidth, double availableHeight)
     {
-        double card = Math.Min(240, Math.Max(1, availableWidth - Padding * 2));
+        double card = Math.Min(256, Math.Max(1, availableWidth - Padding * 2));
         int capacity = Math.Clamp((int)((availableWidth - Padding * 2 + Gap) / (card + Gap)), 1, 4);
-        double image = Math.Max(1, Math.Min(card * .6, availableHeight - Padding * 2 - Header - Title));
+        double image = Math.Max(1, Math.Min((card - ItemPadding * 2) * .6, availableHeight - Padding * 2 - ItemPadding * 2 - Header - Title));
         return new(capacity, card, image);
     }
     public static PreviewRectangle Fit(double sourceWidth, double sourceHeight, double width, double height)

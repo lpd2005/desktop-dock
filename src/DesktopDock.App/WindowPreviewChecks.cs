@@ -1,5 +1,8 @@
 using System.Diagnostics;
 using System.IO;
+using System.Windows;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using DesktopDock.Core;
 
 namespace DesktopDock.App;
@@ -51,6 +54,25 @@ internal sealed partial class DockWindow
             Require((Native.GetWindowLongPtr(preview.Handle, -20).ToInt64() & (0x80 | 0x08000000)) == (0x80 | 0x08000000), "PreviewIsNoActivateToolWindow");
             Require(preview.SurfaceHandlesForChecks.All(hwnd => (Native.GetWindowLongPtr(hwnd, -20).ToInt64() & (0x80 | 0x08000000)) == (0x80 | 0x08000000)), "ThumbnailsAreExcludedFromAltTab");
             Require(!preview.Animating && !rendering, "SettledPreviewStopsAnimationClocks");
+            Require(preview.BodyForChecks.Background is SolidColorBrush { Color.A: 255 }, "PreviewUsesOpaqueBackground");
+            var renderedBody = new RenderTargetBitmap((int)Math.Ceiling(preview.BodyForChecks.ActualWidth), (int)Math.Ceiling(preview.BodyForChecks.ActualHeight), 96, 96, PixelFormats.Pbgra32);
+            renderedBody.Render(preview.BodyForChecks);
+            byte[] bodyPixel = new byte[4];
+            renderedBody.CopyPixels(new Int32Rect(renderedBody.PixelWidth / 2, renderedBody.PixelHeight / 2, 1, 1), bodyPixel, 4, 0);
+            Require(bodyPixel[3] == 255, "RenderedBodyDoesNotShowUnderlyingWindows");
+            preview.HoverForChecks(-1); await Task.Delay(170);
+            var restingColors = preview.CardColorsForChecks.ToArray(); var thumbnailHandles = preview.SurfaceHandlesForChecks.ToArray();
+            preview.HoverForChecks(0); await Task.Delay(170);
+            Require(preview.HoveredCardForChecks == 0 && preview.CardColorsForChecks[0] != restingColors[0]
+                && preview.CardColorsForChecks.Skip(1).SequenceEqual(restingColors.Skip(1)), "NativeThumbnailHoverHighlightsOnlyItsOwnCard");
+            if (restingColors.Length > 1)
+            {
+                preview.HoverForChecks(1); await Task.Delay(170);
+                Require(preview.CardColorsForChecks[0] == restingColors[0] && preview.CardColorsForChecks[1] != restingColors[1], "MovingBetweenCardsTransfersHighlight");
+            }
+            preview.HoverForChecks(-1); await Task.Delay(170);
+            Require(preview.CardColorsForChecks.SequenceEqual(restingColors) && !preview.Animating, "HoverLeaveRestoresCardsAndStopsClock");
+            Require(preview.SurfaceHandlesForChecks.SequenceEqual(thumbnailHandles), "HoverDoesNotRecreateThumbnailsOrChangePageLayout");
             hoveredIndex = -1; pointerOverForChecks = false; previewPointerForChecks = true;
             await Task.Delay(900); CheckVisibility();
             Require(preview.Open && IsDockVisible, "PointerOnPreviewKeepsDockAndPreviewOpen");
@@ -58,6 +80,13 @@ internal sealed partial class DockWindow
             Native.GetWindowRect(preview.Handle, out var bounds);
             var work = System.Windows.Forms.Screen.PrimaryScreen!.WorkingArea;
             Require(bounds.Left >= work.Left && bounds.Right <= work.Right && bounds.Top >= work.Top && bounds.Bottom <= work.Bottom, "PreviewStaysInsideWorkingArea");
+            using (var single = new WindowPreview(_ => { }))
+            {
+                single.Show("Example window", [windows[0]], IconService.Bitmap(iconCache[item.Target]), (bounds.Left + bounds.Right) / 2d,
+                    bounds.Bottom, new() { Left = work.Left, Top = work.Top, Right = work.Right, Bottom = work.Bottom }, scale, reducedMotion: true);
+                Require(single.ThumbnailCount == 1 && single.BodyForChecks.ActualHeight < preview.BodyForChecks.ActualHeight,
+                    "SingleWindowOmitsPagingSpaceAndKeepsCompactCard");
+            }
             preview.WheelForChecks(-120);
             Require(preview.Page == 1, "WheelNavigatesMultipleWindowPages");
             await Task.Delay(200); preview.WheelForChecks(120);
@@ -98,6 +127,10 @@ internal sealed partial class DockWindow
             Require(!preview.Open && preview.ThumbnailCount == 0, "SettingDisablesPreviewImmediately");
             settings.WindowPreviews = true; settings.ReducedMotion = true; await Reopen();
             Require(!preview.Animating, "ReducedMotionOpensWithoutAnimation");
+            preview.HoverForChecks(0);
+            await WaitFor(() => preview.HoveredCardForChecks == 0, "ReducedMotionHoverReceivesNativeInput");
+            Require(!preview.Animating && preview.CardColorsForChecks[0] == Colors.White, "ReducedMotionHoverChangesImmediately");
+            preview.HoverForChecks(null);
             Native.PostMessage(windows[5], 0x0010, 0, 0);
             await WaitFor(() => !Native.IsWindow(windows[5]), "FixtureWindowCloses");
             preview.Refresh(launcher.WindowsFor(item));

@@ -41,17 +41,19 @@ internal sealed class DwmPreviewSurface : Forms.NativeWindow, IDisposable
     [DllImport("dwmapi.dll")] private static extern int DwmUpdateThumbnailProperties(nint thumbnail, ref Properties properties);
     private readonly Action activate;
     private readonly Action<int> wheel;
+    private readonly Action hoverChanged;
     private nint thumbnail;
     private int width, height;
     private int pressX, pressY;
     private double dpi = 1;
     private bool pressed;
+    private bool tracking;
     public PreviewTarget Target { get; }
     public bool Available => thumbnail != 0;
 
-    public DwmPreviewSurface(nint owner, PreviewTarget target, Action activate, Action<int> wheel)
+    public DwmPreviewSurface(nint owner, PreviewTarget target, Action activate, Action<int> wheel, Action hoverChanged)
     {
-        Target = target; this.activate = activate; this.wheel = wheel;
+        Target = target; this.activate = activate; this.wheel = wheel; this.hoverChanged = hoverChanged;
         CreateHandle(new Forms.CreateParams
         {
             Caption = "Desktop Dock · Window thumbnail", Width = 1, Height = 1,
@@ -88,6 +90,14 @@ internal sealed class DwmPreviewSurface : Forms.NativeWindow, IDisposable
             case 0x0021: message.Result = new(3); return;
             case 0x0014: message.Result = new(1); return;
             case 0x0020: Native.SetCursor(Native.LoadCursor(0, new(32649))); message.Result = new(1); return;
+            case 0x0200:
+                if (!tracking)
+                {
+                    var track = new Native.MouseTrack { Size = Marshal.SizeOf<Native.MouseTrack>(), Flags = 2, Hwnd = Handle };
+                    Native.TrackMouseEvent(ref track); tracking = true;
+                }
+                hoverChanged(); return;
+            case 0x02A3: tracking = false; hoverChanged(); break;
             case 0x0201:
                 pressX = unchecked((short)message.LParam.ToInt64()); pressY = unchecked((short)(message.LParam.ToInt64() >> 16));
                 pressed = true; Native.SetCapture(Handle); return;

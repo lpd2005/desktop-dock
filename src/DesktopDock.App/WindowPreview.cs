@@ -4,6 +4,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Interop;
 using System.Windows.Media;
+using System.Windows.Media.Effects;
 using DesktopDock.Core;
 
 namespace DesktopDock.App;
@@ -12,6 +13,20 @@ internal sealed class WindowPreview : IDisposable
 {
     private readonly Window window;
     private readonly StackPanel root = new();
+    private readonly Border body;
+    private sealed class PreviewCard(Border frame)
+    {
+        public Border Frame { get; } = frame;
+        public SolidColorBrush Background { get; } = new(RestColor);
+        public SolidColorBrush Outline { get; } = new(RestColor);
+        public TimedTransition Highlight { get; } = new();
+    }
+    private static readonly Color RestColor = Color.FromRgb(232, 235, 240);
+    private static readonly Color HoverColor = Color.FromRgb(255, 255, 255);
+    private static readonly Color HoverOutline = Color.FromRgb(151, 183, 228);
+    private static readonly Brush Ink = new SolidColorBrush(Color.FromRgb(33, 38, 47));
+    private static readonly Brush Muted = new SolidColorBrush(Color.FromRgb(100, 109, 122));
+    private readonly List<PreviewCard> cards = [];
     private readonly List<DwmPreviewSurface> surfaces = [];
     private readonly List<(Border Area, DwmPreviewSurface Surface)> placements = [];
     private readonly List<(TextBlock Label, PreviewTarget Target)> titles = [];
@@ -28,11 +43,23 @@ internal sealed class WindowPreview : IDisposable
     private double anchorX, anchorTop, scale;
     private int page;
     private bool reduced, disposed;
+    private bool hoverPending;
+    private int hoveredCard = -1;
+    private int? hoverIndexForChecks;
     public bool Open { get; private set; }
     public nint Handle => new WindowInteropHelper(window).Handle;
     internal int ThumbnailCount => surfaces.Count(x => x.Available);
     internal int Page => page;
-    internal bool Animating => fade.Active;
+    internal bool Animating => fade.Active || cards.Any(x => x.Highlight.Active);
+    internal int HoveredCardForChecks => hoveredCard;
+    internal IReadOnlyList<Color> CardColorsForChecks => cards.Select(x => x.Background.Color).ToArray();
+    internal Border BodyForChecks => body;
+    internal void HoverForChecks(int? index)
+    {
+        hoverIndexForChecks = index;
+        if (index is >= 0 && index < surfaces.Count) Native.SendMessage(surfaces[index.Value].Handle, 0x0200, 0, new(20 | 20 << 16));
+        else QueueHover();
+    }
     internal IReadOnlyList<PreviewTarget> Targets => targets;
     internal IReadOnlyList<nint> SurfaceHandlesForChecks => surfaces.Select(x => x.Handle).ToArray();
     internal void WheelForChecks(int delta) => TurnWheel(delta);
@@ -52,8 +79,13 @@ internal sealed class WindowPreview : IDisposable
             ShowInTaskbar = false, ShowActivated = false, Topmost = true, Opacity = 0,
             WindowStartupLocation = WindowStartupLocation.Manual, FontFamily = new("Segoe UI Variable Display, Microsoft YaHei UI")
         };
-        TransparentUi.Install(window);
-        var card = TransparentUi.Card(root, 20); card.Padding = new(WindowPreviewLayout.Padding); window.Content = card;
+        // Only the rounded exterior/shadow is alpha; the complete preview body
+        // and individual cards are opaque so underlying windows cannot show through.
+        window.AllowsTransparency = true; window.Background = Brushes.Transparent;
+        body = new Border { Child = root, Margin = new(8), Padding = new(7), CornerRadius = new(14),
+            Background = new SolidColorBrush(RestColor), BorderBrush = new SolidColorBrush(Color.FromRgb(201, 208, 219)), BorderThickness = new(1),
+            Effect = new DropShadowEffect { BlurRadius = 16, ShadowDepth = 3, Opacity = .2, Color = Colors.Black } };
+        window.Content = body;
         window.SourceInitialized += (_, _) =>
         {
             FeatureUi.ToolWindow(window, noActivate: true);
@@ -61,6 +93,8 @@ internal sealed class WindowPreview : IDisposable
             { if (message == 0x0021) { handled = true; return 3; } return 0; });
         };
         window.PreviewMouseWheel += (_, e) => { TurnWheel(e.Delta); e.Handled = true; };
+        window.MouseMove += (_, _) => QueueHover();
+        window.MouseLeave += (_, _) => QueueHover();
         animation = new(window.Dispatcher, Frame);
     }
     public void Show(string name, IEnumerable<nint> windows, ImageSource image, double centerX, double bottom,
@@ -88,52 +122,52 @@ internal sealed class WindowPreview : IDisposable
     {
         ClearSurfaces(); root.Children.Clear(); titles.Clear();
         int pages = (targets.Length + layout.Capacity - 1) / layout.Capacity;
-        var header = new DockPanel { Height = WindowPreviewLayout.Header };
+        var row = new StackPanel { Orientation = Orientation.Horizontal }; root.Children.Add(row);
         var nav = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
         if (pages > 1)
         {
             var previous = NavButton("‹", -1); previous.IsEnabled = page > 0; nav.Children.Add(previous);
-            nav.Children.Add(TransparentUi.Text($"{page + 1} / {pages}", 11, TransparentUi.Muted));
+            nav.Children.Add(FeatureUi.Text($"{page + 1} / {pages}", 11, Muted));
             var next = NavButton("›", 1); next.IsEnabled = page + 1 < pages; nav.Children.Add(next);
         }
-        else nav.Children.Add(TransparentUi.Text($"{targets.Length} 个窗口", 11, TransparentUi.Muted));
-        DockPanel.SetDock(nav, Dock.Right); header.Children.Add(nav);
-        var name = TransparentUi.Text(appName, 13); name.FontWeight = FontWeights.SemiBold; name.TextTrimming = TextTrimming.CharacterEllipsis;
-        name.Margin = new(0, 0, 12, 0); header.Children.Add(name); root.Children.Add(header);
-        var row = new StackPanel { Orientation = Orientation.Horizontal }; root.Children.Add(row);
+        if (pages > 1) { nav.Height = WindowPreviewLayout.Header; root.Children.Add(nav); }
         var visible = targets.Skip(page * layout.Capacity).Take(layout.Capacity).ToArray();
-        window.Width = layout.Width(visible.Length); window.Height = layout.Height;
+        window.Width = layout.Width(visible.Length); window.Height = layout.HeightFor(pages > 1);
         window.Left = Math.Clamp(anchorX / scale - window.Width / 2, (work.Left + 8) / scale, (work.Right - 8) / scale - window.Width);
         window.Top = Math.Max((work.Top + 8) / scale, anchorTop / scale - window.Height);
         if (!window.IsVisible) window.Show();
         foreach (var target in visible)
         {
-            var column = new StackPanel { Width = layout.CardWidth, Margin = new(row.Children.Count > 0 ? WindowPreviewLayout.Gap : 0, 0, 0, 0) };
+            var column = new StackPanel();
+            var frame = new Border { Child = column, Width = layout.CardWidth, Padding = new(WindowPreviewLayout.ItemPadding - 1),
+                BorderThickness = new(1), CornerRadius = new(10), Cursor = System.Windows.Input.Cursors.Hand,
+                Margin = new(row.Children.Count > 0 ? WindowPreviewLayout.Gap : 0, 0, 0, 0) };
+            var card = new PreviewCard(frame); frame.Background = card.Background; frame.BorderBrush = card.Outline; cards.Add(card);
             var title = new StringBuilder(512); Native.GetWindowText(target.Window, title, title.Capacity);
             var titleRow = new DockPanel { Height = WindowPreviewLayout.Title };
             titleRow.Children.Add(new Image { Source = icon, Width = 16, Height = 16, Margin = new(0, 0, 7, 0) });
-            var text = TransparentUi.Text(title.Length > 0 ? title.ToString() : appName, 11); text.TextTrimming = TextTrimming.CharacterEllipsis;
+            var text = FeatureUi.Text(title.Length > 0 ? title.ToString() : appName, 12, Ink); text.TextTrimming = TextTrimming.CharacterEllipsis;
             titles.Add((text, target));
             titleRow.Children.Add(text); column.Children.Add(titleRow);
             var placeholder = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
             placeholder.Children.Add(new Image { Source = icon, Height = 40, Margin = new(0, 0, 0, 8) });
-            var fallback = TransparentUi.Text(Native.IsIconic(target.Window) ? "已最小化 · 点击恢复" : "点击切换窗口", 11, TransparentUi.Muted);
+            var fallback = FeatureUi.Text(Native.IsIconic(target.Window) ? "已最小化 · 点击恢复" : "点击切换窗口", 11, Muted);
             fallback.HorizontalAlignment = HorizontalAlignment.Center; placeholder.Children.Add(fallback);
-            var area = new Border { Height = layout.ImageHeight, Background = TransparentUi.Tint(15), CornerRadius = new(10), Child = placeholder,
+            var area = new Border { Height = layout.ImageHeight, Background = new SolidColorBrush(Color.FromRgb(219, 225, 233)), CornerRadius = new(6), Child = placeholder,
                 Cursor = System.Windows.Input.Cursors.Hand };
             column.Children.Add(area);
             Point? pressedAt = null;
-            column.MouseLeftButtonDown += (_, e) => pressedAt = e.GetPosition(column);
-            column.MouseLeave += (_, _) => pressedAt = null;
-            column.MouseLeftButtonUp += (_, e) =>
+            frame.MouseLeftButtonDown += (_, e) => pressedAt = e.GetPosition(frame);
+            frame.MouseLeave += (_, _) => { pressedAt = null; QueueHover(); };
+            frame.MouseLeftButtonUp += (_, e) =>
             {
-                var released = e.GetPosition(column);
+                var released = e.GetPosition(frame);
                 if (pressedAt is Point pressed && !DockReorder.Moved(released.X - pressed.X, released.Y - pressed.Y)) Activate(target);
                 pressedAt = null; e.Handled = true;
             };
-            row.Children.Add(column);
+            row.Children.Add(frame);
             var surface = new DwmPreviewSurface(Handle, target, () => window.Dispatcher.BeginInvoke(() => Activate(target)),
-                delta => window.Dispatcher.BeginInvoke(() => TurnWheel(delta)));
+                delta => window.Dispatcher.BeginInvoke(() => TurnWheel(delta)), QueueHover);
             surfaces.Add(surface); placements.Add((area, surface));
         }
         UpdateTitles(); window.UpdateLayout();
@@ -143,11 +177,12 @@ internal sealed class WindowPreview : IDisposable
             var point = area.PointToScreen(new(0, 0));
             surface.Place((int)Math.Round(point.X), (int)Math.Round(point.Y), (int)Math.Round(area.ActualWidth * scale), (int)Math.Round(area.ActualHeight * scale), scale);
         }
-        Present();
+        Present(); QueueHover();
     }
     private Button NavButton(string title, int direction)
     {
-        var button = TransparentUi.Button(title, () => ChangePage(direction)); button.Padding = new(8, 0, 8, 1);
+        var button = FeatureUi.Button(title, () => ChangePage(direction)); button.Background = Brushes.Transparent; button.Foreground = Ink;
+        button.Padding = new(8, 0, 8, 1);
         button.Margin = new(4, 0, 4, 0); button.FontSize = 19; button.Focusable = false; return button;
     }
     private void TurnWheel(int delta)
@@ -199,8 +234,15 @@ internal sealed class WindowPreview : IDisposable
     }
     private void Frame()
     {
-        fade.Sample(clock.Elapsed.TotalSeconds); Present();
-        if (fade.Active) return;
+        double now = clock.Elapsed.TotalSeconds;
+        bool fading = fade.Active;
+        fade.Sample(now); if (fading) Present();
+        foreach (var card in cards)
+        {
+            if (!card.Highlight.Active) continue;
+            card.Highlight.Sample(now); PaintCard(card);
+        }
+        if (Animating) return;
         animation.Stop(); if (!Open) FinishHide();
     }
     private void Present()
@@ -208,7 +250,48 @@ internal sealed class WindowPreview : IDisposable
         window.Opacity = fade.Value;
         foreach (var surface in surfaces) surface.Present((byte)Math.Round(fade.Value * 255));
     }
-    private void ClearSurfaces() { foreach (var surface in surfaces) surface.Dispose(); surfaces.Clear(); placements.Clear(); }
+    private void QueueHover()
+    {
+        if (disposed || !Open || hoverPending) return;
+        hoverPending = true;
+        window.Dispatcher.BeginInvoke(() =>
+        {
+            hoverPending = false;
+            if (disposed || !Open) return;
+            int index = hoverIndexForChecks ?? CardUnderPointer();
+            if (index == hoveredCard) return;
+            hoveredCard = index;
+            double now = clock.Elapsed.TotalSeconds;
+            for (int i = 0; i < cards.Count; i++)
+            {
+                var card = cards[i];
+                if (reduced) card.Highlight.Reset(i == index ? 1 : 0);
+                else card.Highlight.Begin(i == index ? 1 : 0, now, .12);
+                PaintCard(card);
+            }
+            if (Animating) animation.Start();
+        });
+    }
+    private int CardUnderPointer()
+    {
+        Native.GetCursorPos(out var point); nint hit = Native.WindowFromPoint(point);
+        for (int i = 0; i < surfaces.Count; i++) if (surfaces[i].Handle == hit) return i;
+        if (hit != Handle) return -1;
+        for (int i = 0; i < cards.Count; i++)
+        {
+            var card = cards[i].Frame; var local = card.PointFromScreen(new(point.X, point.Y));
+            if (local.X >= 0 && local.Y >= 0 && local.X < card.ActualWidth && local.Y < card.ActualHeight) return i;
+        }
+        return -1;
+    }
+    private static void PaintCard(PreviewCard card)
+    {
+        static Color Blend(Color from, Color to, double progress) => Color.FromRgb(
+            (byte)Math.Round(from.R + (to.R - from.R) * progress), (byte)Math.Round(from.G + (to.G - from.G) * progress), (byte)Math.Round(from.B + (to.B - from.B) * progress));
+        card.Background.Color = Blend(RestColor, HoverColor, card.Highlight.Value);
+        card.Outline.Color = Blend(RestColor, HoverOutline, card.Highlight.Value);
+    }
+    private void ClearSurfaces() { foreach (var surface in surfaces) surface.Dispose(); surfaces.Clear(); placements.Clear(); cards.Clear(); hoveredCard = -1; }
     private void FinishHide() { ClearSurfaces(); window.Hide(); root.Children.Clear(); titles.Clear(); targets = []; icon = null; }
     public void Dispose()
     {

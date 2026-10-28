@@ -1,6 +1,6 @@
 # Dock 交互与当前实现
 
-当前以 0.1.0-preview.21 为准。preview.2 的启动动效和窗口位置调整已按用户要求移除。
+当前以 0.1.0-preview.22 为准。preview.2 的启动动效和窗口位置调整已按用户要求移除。
 
 ## 显示、遮挡与召回
 
@@ -24,9 +24,13 @@
 
 ## 应用图标的任务栏语义
 
-固定应用的悬停在约 400 ms 后展开透明窗口预览；无可识别窗口和内置入口继续显示原名称提示。一个应用的普通窗口按原有身份匹配，带独立参数的入口仍限于其已关联窗口。每页最多四个，页数随工作区与 DPI 变化；不把浏览器标签页当作独立窗口。图标到预览之间保留约 350 ms 离开宽限，不增加屏幕空白区域的鼠标窗口。停在预览中计入 Dock 交互，避免自动隐藏。
+固定应用的悬停在约 400 ms 后展开窗口预览；无可识别窗口和内置入口继续显示原名称提示。一个应用的普通窗口按原有身份匹配，带独立参数的入口仍限于其已关联窗口。每页最多四个，页数随工作区与 DPI 变化；不把浏览器标签页当作独立窗口。图标到预览之间保留约 350 ms 离开宽限，不增加屏幕空白区域的鼠标窗口。停在预览中计入 Dock 交互，避免自动隐藏。
 
-预览使用无激活工具窗口与逐像素透明卡片，每个可见缩略图由独立、受控大小的原生顶层窗口承载。通过 [DwmRegisterThumbnail](https://learn.microsoft.com/en-us/windows/win32/api/dwmapi/nf-dwmapi-dwmregisterthumbnail) 建立关系，以 [DwmUpdateThumbnailProperties](https://learn.microsoft.com/en-us/windows/win32/api/dwmapi/nf-dwmapi-dwmupdatethumbnailproperties) 设置等比内容与透明度。系统负责图像更新，不运行截图循环。只有显示时每秒刷新窗口列表、标题和内容尺寸；仅当前页注册关系，关闭或翻页释放。160 / 100 ms 淡入淡出结束即停止专用动画时钟，减少动画时直接切换。
+预览参考 [Windows 原生任务栏的窗口预览](https://blogs.windows.com/windows-insider/2024/07/12/announcing-windows-11-insider-preview-build-22635-3930-beta-channel/)，主体使用不透明浅灰底、深色标题、圆角和柔和阴影；仅圆角外部与阴影保留透明度，不模糊或透出后方内容。每个窗口独立显示图标、标题和缩略图，省略重复的应用公共标题，仅在多页时显示底部导航。
+
+鼠标经过卡片标题、空隙或原生缩略图时，合并鼠标消息并按实际命中位置选择唯一卡片，约 120 ms 内变亮并显示细高亮边线。原生缩略图单独报告鼠标移动 / 离开，避免 WPF 跨 HWND 时丢失反馈。高亮只更新现有画刷，不重建 DWM 关系、不改变卡片尺寸与位置；没有持续轮询或高亮空闲动画。减少动画即时切换。
+
+预览使用无激活工具窗口，每个可见缩略图由独立、受控大小的原生顶层窗口承载。通过 [DwmRegisterThumbnail](https://learn.microsoft.com/en-us/windows/win32/api/dwmapi/nf-dwmapi-dwmregisterthumbnail) 建立关系，以 [DwmUpdateThumbnailProperties](https://learn.microsoft.com/en-us/windows/win32/api/dwmapi/nf-dwmapi-dwmupdatethumbnailproperties) 设置等比内容与透明度。系统负责图像更新，不运行截图循环。只有显示时每秒刷新窗口列表、标题和内容尺寸；仅当前页注册关系，关闭或翻页释放。160 / 100 ms 淡入淡出结束即停止专用动画时钟，减少动画时直接切换。
 
 点击缩略图前重新验证窗口、所属进程和应用关联；仅激活 / 恢复选中窗口，不使用图标的再次点击最小化语义。最小化窗口可能显示系统缓存，注册失败时使用可点击图标和标题。Esc、Alt+Tab、图标按下、拖拽、菜单、设置变更与 Dock 收起立即撤销预览；自身预览窗口不触发遮挡检测。窗口标题与内容只用于当前本机展示，不写入配置、日志或仓库。
 
