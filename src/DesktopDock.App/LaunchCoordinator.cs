@@ -170,6 +170,18 @@ internal sealed class LaunchCoordinator : IDisposable
         return windows;
     }
 
+    internal bool ActivatePreview(DockItem item, PreviewTarget target)
+    {
+        if (!target.Valid || !WindowsFor(item).Contains(target.Window)) return false;
+        StopWatch();
+        bound[item.Target + "\n" + item.Arguments] = new(target.Window, target.Process);
+        LastWindow = target.Window;
+        LastAction = Native.IsIconic(target.Window) ? AppClickAction.Restore : AppClickAction.Activate;
+        Native.ShowWindowAsync(target.Window, LastAction == AppClickAction.Restore ? 9 : 5);
+        Native.SetForegroundWindow(target.Window);
+        return true;
+    }
+
     internal static List<nint> Windows(bool includeHidden = false)
     {
         var result = new List<nint>();

@@ -8,6 +8,14 @@ namespace DesktopDock.App;
 
 internal sealed partial class Controller
 {
+    public async Task RunWindowPreviewTest(bool inspect = false)
+    {
+        dock.UseOcclusionWindowsForChecks(() => []);
+        var checks = await dock.CheckWindowPreviews(Path.Combine(data, "preview-checks"), inspect);
+        File.WriteAllText(Path.Combine(data, "window-preview-report.json"), JsonSerializer.Serialize(checks, new JsonSerializerOptions { WriteIndented = true }));
+        Quit();
+    }
+
     public async Task RunDragTest(bool holdForInspection = false)
     {
         dock.UseOcclusionWindowsForChecks(() => []);
@@ -155,6 +163,7 @@ internal sealed partial class Controller
             await RegressionProbe.SetMode(anchor, probeData, "normal");
             settingsWindow.WindowState = WindowState.Normal;
             dock.RefreshOcclusion(); await dock.WaitUntilShownForChecks();
+            await Focus(settingsHandle);
             dock.InvokeSettingsEntry(); await Task.Delay(150);
             bool settingsMinimized = settingsWindow?.WindowState == WindowState.Minimized;
             StateCheck(dock.SettingsStateForChecks == new DockAppState(true, false), "MinimizedSettingsKeepsRunningMarker");

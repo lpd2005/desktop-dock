@@ -61,7 +61,7 @@ internal static class RegressionProbe
             ApplyMode(mode);
         };
         var grid = new Grid { Margin = new(24) };
-        var caption = new TextBlock { Text = mode == "normal" ? "Dock 交互回归检查" : mode == "maximized" ? "最大化避让检查" : "全屏避让检查",
+        var caption = new TextBlock { Text = mode is "normal" or "preview" ? "Dock 交互回归检查" : mode == "maximized" ? "最大化避让检查" : "全屏避让检查",
             FontSize = 30, Foreground = new SolidColorBrush(Color.FromRgb(37, 51, 75)), VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Center };
         grid.Children.Add(caption);
         var row = new UniformGrid { Columns = 12, Height = 60, VerticalAlignment = VerticalAlignment.Bottom };
@@ -91,7 +91,7 @@ internal static class RegressionProbe
             WriteShared(Path.Combine(data, "ready.json"), JsonSerializer.Serialize(new { Mode = appliedMode, Ready = true, WindowHandle = (long)new WindowInteropHelper(window).Handle }));
         };
         modeTimer.Start();
-        var timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(90) };
+        var timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(mode == "preview" ? 900 : 90) };
         timer.Tick += (_, _) => { timer.Stop(); modeTimer.Stop(); window.Close(); };
         timer.Start();
         return app.Run(window);

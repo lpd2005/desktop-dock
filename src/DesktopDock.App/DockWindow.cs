@@ -214,6 +214,7 @@ internal sealed partial class DockWindow : IDisposable
 
     public void ApplySettings()
     {
+        CloseWindowPreview();
         renderer.SetTheme(settings);
         Reposition();
         CheckVisibility();
@@ -364,6 +365,7 @@ internal sealed partial class DockWindow : IDisposable
                     hoveredIndex = current; label.IsOpen = false; labelTimer.Stop();
                     if (current >= 0 && pressedIndex < 0 && !externalDrop && !returning) labelTimer.Start();
                 }
+                UpdateWindowPreview(clock.Elapsed.TotalSeconds);
                 break;
             case 0x02A3:
                 tracking = false; hoveredIndex = -1;
@@ -372,6 +374,7 @@ internal sealed partial class DockWindow : IDisposable
                 break;
             case 0x0201:
             case 0x0203: // Some input classes replace the second button-down with WM_LBUTTONDBLCLK.
+                CloseWindowPreview();
                 NoteInteraction();
                 interactionVersion++;
                 pressedForeground = Native.GetAncestor(Native.GetForegroundWindow(), 3);
@@ -433,6 +436,7 @@ internal sealed partial class DockWindow : IDisposable
     {
         labelTimer.Stop();
         if (hoveredIndex < 0 || hoveredIndex >= entries.Count || blocked || autoHidden || pressedIndex >= 0 || dragging || returning || externalDrop || !IsPointerOverDock()) return;
+        if (UpdateWindowPreview(clock.Elapsed.TotalSeconds)) return;
         var slot = geometry.Slots[hoveredIndex];
         label.Content = entries[hoveredIndex].Name;
         label.HorizontalOffset = (left + (slot.X + slot.Size / 2) * scale) / scale - 38;
@@ -442,6 +446,7 @@ internal sealed partial class DockWindow : IDisposable
 
     private void Launch(DockItem item, bool toggle = true, nint? foregroundAtPress = null, bool allowLaunch = true)
     {
+        CloseWindowPreview();
         NoteInteraction();
         if (item.Target == "dock:settings") { if (toggle) toggleSettings(foregroundAtPress); else openSettings(); return; }
         if (item.Target == "dock:apps") { toggleApplications(); return; }
@@ -456,6 +461,7 @@ internal sealed partial class DockWindow : IDisposable
     private void ShowMenu(int index)
     {
         if (menuOpen || disposed) return;
+        CloseWindowPreview();
         label.IsOpen = false; labelTimer.Stop(); hover.Reset(0); renderer.ResetPressFeedback(); StopRendering(); RenderLayout();
         nint menu = Native.CreatePopupMenu();
         if (menu == 0) return;
@@ -540,6 +546,8 @@ internal sealed partial class DockWindow : IDisposable
         Native.GetCursorPos(out var cursor);
         bool atEdge = bottomEdgeForChecks ?? (cursor.X >= screen.Left && cursor.X < screen.Right && cursor.Y >= screen.Bottom - 2 && cursor.Y < screen.Bottom);
         bool interacting = pressedIndex >= 0 || dragging || returning || externalDrop || shellDragging || finishingDrop || menuOpen || applicationsOpen();
+        bool previewOpen = UpdateWindowPreview(now, switching);
+        interacting |= previewOpen;
         bool overPresented = motion.Progress > 0 && IsPointerOverDock();
         if (motion.Active && !motion.Target && overPresented && !switching) visibility.Summon(now);
         bool show = visibility.ShouldShow(cachedOccluded, switching, now, settings.AutoHide, atEdge,
@@ -552,6 +560,7 @@ internal sealed partial class DockWindow : IDisposable
             autoHidden = !blocked;
             if (wasTarget)
             {
+                CloseWindowPreview();
                 StopRendering(); hover.Reset(0); renderer.ResetPressFeedback(); label.IsOpen = false;
                 hideTransitions++;
             }
@@ -641,6 +650,7 @@ internal sealed partial class DockWindow : IDisposable
             && IsPinnedIndex(index) && entries[index] == item && settings.Items[index - 1] == item;
 
         startingDrag = true;
+        CloseWindowPreview();
         BitmapOverlay? prepared = null;
         try
         {
@@ -733,6 +743,7 @@ internal sealed partial class DockWindow : IDisposable
     }
     private void CancelInteraction()
     {
+        CloseWindowPreview();
         renderer.ReleasePressFeedback();
         clicks.Reset();
         interactionVersion++;
@@ -745,6 +756,7 @@ internal sealed partial class DockWindow : IDisposable
     private void PreviewDrop(Native.Point point, bool allowed)
     {
         if (disposed) return;
+        CloseWindowPreview();
         NoteInteraction();
         Native.ScreenToClient(Handle, ref point);
         externalDrop = allowed; insertion = allowed ? DockReorder.Insertion(RestGeometry, settings.Items.Count, point.X / scale, start: 1) + 1 : -1;
@@ -794,6 +806,7 @@ internal sealed partial class DockWindow : IDisposable
         CancelInteraction(); disposed = true; StopRendering(); visibilityTimer.Stop(); labelTimer.Stop(); label.IsOpen = false;
         foreach (nint hook in hooks) if (hook != 0) Native.UnhookWinEvent(hook);
         if (menuOpen) Native.EndMenu();
+        windowPreview?.Dispose();
         dropTarget.Dispose(); launcher.Dispose(); animationClock.Dispose(); motion.Dispose(); renderer.Dispose(); visualSource.Dispose(); source.Dispose();
     }
 }

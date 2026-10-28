@@ -3,7 +3,7 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <LangVersion>latest</LangVersion>
-    <Version>0.1.0-preview.20</Version>
+    <Version>0.1.0-preview.21</Version>
     <Deterministic>true</Deterministic>
     <DebugType>embedded</DebugType>
     <PathMap>$(MSBuildThisFileDirectory)=/_/</PathMap>

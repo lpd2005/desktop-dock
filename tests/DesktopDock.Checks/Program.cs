@@ -277,4 +277,29 @@ Check(DockReorder.Order(7, 1, 4, 5, start: 1).SequenceEqual([0, 2, 3, 4, 1, 5, 6
 Check(DockReorder.Order(7, 0, 4, 5, start: 1).SequenceEqual(Enumerable.Range(0, 7)), "Launcher is excluded from movable range");
 Check(DockReorder.Target(prefixed, 5, 1, -100, start: 1) == 1 && DockReorder.Target(prefixed, 5, 1, 5000, start: 1) == 5, "Drag targets clamp to pinned entries");
 Check(DockReorder.Insertion(prefixed, 5, -100, start: 1) == 0 && DockReorder.Insertion(prefixed, 5, 5000, start: 1) == 5, "Drops return pinned indexes after the launcher");
+var previewHover = new PreviewHover();
+Check(previewHover.Update(2, false, true, 0) == -1 && previewHover.Update(2, false, true, .39) == -1, "Preview requires an icon dwell");
+Check(previewHover.Update(2, false, true, .41) == 2, "Stable hover opens the correct preview");
+Check(previewHover.Update(-1, false, true, .5) == 2 && previewHover.Update(-1, true, true, .7) == 2, "Preview survives the gap and pointer entry");
+Check(previewHover.Update(3, false, true, 1) == 2 && previewHover.Update(3, false, true, 1.41) == 3, "Crossing icons waits before changing preview");
+Check(previewHover.Update(-1, false, true, 2) == 3 && previewHover.Update(-1, false, true, 2.36) == -1, "Leaving preview closes after grace");
+previewHover.Update(1, false, true, 3); previewHover.Update(1, false, true, 3.5);
+Check(previewHover.Update(1, true, false, 3.6) == -1, "Dragging, switching or disabled previews dismiss immediately");
+Check(previewHover.Update(1, false, true, 3.7) == -1, "Interaction restarts dwell instead of reopening immediately");
+foreach (double availableWidth in new[] { 320d, 600, 1280, 3840 })
+foreach (double availableHeight in new[] { 160d, 700 })
+{
+    var previewLayout = WindowPreviewLayout.Calculate(availableWidth, availableHeight);
+    Check(previewLayout.Capacity is >= 1 and <= 4 && previewLayout.Width(previewLayout.Capacity) <= availableWidth && previewLayout.Height <= availableHeight,
+        "Preview pages fit available space at different DPI scales");
+    foreach (var size in new[] { (1920d, 1080d), (700d, 1200d), (0d, 0d) })
+    {
+        var fit = WindowPreviewLayout.Fit(size.Item1, size.Item2, previewLayout.CardWidth, previewLayout.ImageHeight);
+        Check(fit.X >= -.001 && fit.Y >= -.001 && fit.X + fit.Width <= previewLayout.CardWidth + .001 && fit.Y + fit.Height <= previewLayout.ImageHeight + .001,
+            "Portrait and landscape thumbnail content stays inside its card");
+        if (size.Item1 > 0) Check(Math.Abs(fit.Width / fit.Height - size.Item1 / size.Item2) < .001, "Thumbnails retain their aspect ratio");
+    }
+}
+Check(System.Text.Json.JsonSerializer.Deserialize<DockSettings>("{}")!.WindowPreviews, "Old settings enable preview without migration");
+Check(!System.Text.Json.JsonSerializer.Deserialize<DockSettings>("{\"WindowPreviews\":false}")!.WindowPreviews, "Disabled previews persist");
 Console.WriteLine($"PASS: {checks} geometry, persistence and interaction checks.");

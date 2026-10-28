@@ -73,6 +73,7 @@ internal sealed class SettingsWindow : Window
         AddCheck(layout, "减少动画", "即时切换状态，减少视觉动效", settings.ReducedMotion, v => settings.ReducedMotion = v);
         var behavior = Section(appearance, "显示与桌面");
         AddCheck(behavior, "自动隐藏 Dock", "移到底边停留唤出，离开后收起", settings.AutoHide, v => settings.AutoHide = v);
+        AddCheck(behavior, "窗口预览", "悬停已运行应用，预览并选择窗口", settings.WindowPreviews, v => settings.WindowPreviews = v);
         AddCheck(behavior, "隐藏桌面图标", "在桌面面板中访问，退出 Dock 时恢复", settings.HideDesktopIcons, v => settings.HideDesktopIcons = v);
         Page("外观与动画", "透明图标、轻盈倒影，让桌面保持清爽。", appearance);
 
