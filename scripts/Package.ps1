@@ -19,7 +19,7 @@ $env:DOTNET_GENERATE_ASPNET_CERTIFICATE = 'false'
 if ($LASTEXITCODE -ne 0) { throw 'Build failed.' }
 & $taskDotnet tests/DesktopDock.Checks/bin/Release/net10.0/DesktopDock.Checks.dll
 if ($LASTEXITCODE -ne 0) { throw 'Core checks failed.' }
-$taskOutput = Join-Path $taskRoot 'artifacts/DesktopDock-0.1.0-preview.18-win-x64'
+$taskOutput = Join-Path $taskRoot 'artifacts/DesktopDock-0.1.0-preview.19-win-x64'
 & $taskDotnet publish src/DesktopDock.App/DesktopDock.App.csproj -c Release -r win-x64 --self-contained true -o $taskOutput -p:DebugType=none --disable-build-servers -m:1
 if ($LASTEXITCODE -ne 0) { throw 'Publish failed.' }
 Copy-Item -LiteralPath README.md -Destination (Join-Path $taskOutput 'README.md')

@@ -324,7 +324,10 @@ internal sealed class Controller : IDisposable
             await RegressionProbe.SetMode(anchor, probeData, "covered");
             dock.RefreshOcclusion();
             Require(!dock.IsDockVisible, "Ordinary overlapping window did not hide Dock.");
-            dock.SetShellDragForChecks(new(true, true, true, new() { X = 100, Y = 100 }));
+            var shellDropPoint = dock.ShellDropPointForChecks;
+            dock.SetShellDragForChecks(new(true, true, true, new() { X = shellDropPoint.X, Y = shellDropPoint.Y - 120 }));
+            Require(!dock.IsDockVisible, "Ordinary Explorer capture must not override window coverage.");
+            dock.SetShellDragForChecks(new(true, false, true, shellDropPoint));
             await dock.WaitUntilShownForChecks();
             Require(dock.IsDockVisible, "Shell drag did not override coverage before OLE enter.");
             await Task.Delay(700); dock.CheckVisibility();
@@ -526,7 +529,7 @@ internal sealed class Controller : IDisposable
             await Task.Delay(5000); process.Refresh();
             var report = new
             {
-                Version = "0.1.0-preview.18", dock.HardwareRendering, dock.HostBackdrop, dock.IconCount,
+                Version = "0.1.0-preview.19", dock.HardwareRendering, dock.HostBackdrop, dock.IconCount,
                 BottomEdgeReveals = true, EdgeLeaveHides = recallTimedOut, HoverKeepsVisible = interactionResetTimeout,
                 ContextMenuStaysOpen = menuStaysOpen,
                 VisibilityMotionChecks = visibilityMotionChecks,

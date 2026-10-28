@@ -14,11 +14,15 @@ internal sealed class ShellDragMonitor
     public bool Active => intent.Active;
     public void CaptureStarted(nint window) { if (IsShellSource(window)) shellCaptureStarted = true; }
 
-    public bool Update(bool notified, bool switching, float scale)
+    public bool Update(bool notified, bool switching, float scale, WindowBounds dockArea)
     {
         var input = InputForChecks?.Invoke() ?? Read();
+        // Selection, scrolling and navigation in an Explorer window stay local
+        // to that window. Reveal only when a real gesture approaches the Dock.
+        bool nearDock = input.Point.X >= dockArea.Left - 32 * scale && input.Point.X <= dockArea.Right + 32 * scale
+            && input.Point.Y >= dockArea.Top - 40 * scale && input.Point.Y <= dockArea.Bottom + 24 * scale;
         return intent.Update(input.Down, input.ShellSource, input.Captured, notified,
-            switching || input.Cancelled, input.Point.X / scale, input.Point.Y / scale);
+            switching || input.Cancelled, input.Point.X / scale, input.Point.Y / scale, nearDock);
     }
 
     private ShellDragInput Read()

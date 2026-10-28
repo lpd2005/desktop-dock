@@ -520,7 +520,7 @@ internal sealed class DockWindow : IDisposable
         bool switching = switchingForChecks ?? ((Native.GetAsyncKeyState(0x12) & 0x8000) != 0
             && ((Native.GetAsyncKeyState(0x11) & 0x8000) == 0 || (Native.GetAsyncKeyState(0x09) & 0x8000) != 0));
         bool wasShellDragging = shellDrag.Active;
-        bool shellDragging = shellDrag.Update(systemDragging, switching, scale);
+        bool shellDragging = shellDrag.Update(systemDragging, switching, scale, RestDockArea);
         if (!shellDragging) systemDragging = false;
         if (shellDragging)
         {
@@ -1015,6 +1015,7 @@ internal sealed class DockWindow : IDisposable
         shellDrag.InputForChecks = input is null ? null : () => input.Value;
         CheckVisibility();
     }
+    internal Native.Point ShellDropPointForChecks => new() { X = (RestDockArea.Left + RestDockArea.Right) / 2, Y = (RestDockArea.Top + RestDockArea.Bottom) / 2 };
     internal bool ExcludedFromAltTab => new[] { Handle, visualSource.Handle }.All(hwnd =>
         (Native.GetWindowLongPtr(hwnd, -20).ToInt64() & (0x80 | 0x40000)) == 0x80);
 
@@ -1099,11 +1100,28 @@ internal sealed class DockWindow : IDisposable
                 "NewPressInvalidatesPreviousDragPreparation");
             Native.SendMessage(Handle, 0x001F, 0, 0);
             bool autoHideBefore = settings.AutoHide;
+            bottomEdgeForChecks = false;
             settings.AutoHide = true; CheckVisibility();
             for (int i = 0; i < 60 && !autoHidden; i++) { await Task.Delay(25); CheckVisibility(); }
             Require(autoHidden, "AutoHideInitiallyRetractsDock");
-            SetShellDragForChecks(new(true, true, false, new() { X = 100, Y = 100 }));
-            SetShellDragForChecks(new(true, false, true, new() { X = 130, Y = 130 }));
+            var recallArea = RestDockArea;
+            var nearDock = new Native.Point { X = (recallArea.Left + recallArea.Right) / 2, Y = (recallArea.Top + recallArea.Bottom) / 2 };
+            foreach (var pointAtClick in new[] { new Native.Point { X = recallArea.Left, Y = recallArea.Top - 250 }, nearDock })
+            {
+                for (int click = 0; click < 8; click++)
+                {
+                    SetShellDragForChecks(new(false, false, false, pointAtClick));
+                    SetShellDragForChecks(new(true, true, true, pointAtClick));
+                    SetShellDragForChecks(new(true, true, true, new() { X = pointAtClick.X + 1, Y = pointAtClick.Y + 1 }));
+                    Require(!motion.Target && !shellDrag.Active, "ExplorerClickCaptureDoesNotReveal" + pointAtClick.Y + "-" + click);
+                }
+            }
+            var farFromDock = new Native.Point { X = nearDock.X, Y = recallArea.Top - 250 };
+            SetShellDragForChecks(new(false, false, false, farFromDock));
+            SetShellDragForChecks(new(true, true, true, farFromDock));
+            SetShellDragForChecks(new(true, true, true, new() { X = farFromDock.X + 30, Y = farFromDock.Y + 30 }));
+            Require(!motion.Target && !shellDrag.Active, "ExplorerSelectionAwayFromDockDoesNotReveal");
+            SetShellDragForChecks(new(true, false, true, nearDock));
             await WaitUntilShownForChecks();
             Require(shellDrag.Active && IsDockVisible && !autoHidden, "DesktopDragWithoutWinEventRevealsDock");
             await Task.Delay(650); CheckVisibility();

@@ -43,7 +43,7 @@ internal sealed class SettingsWindow : Window
         brand.Children.Add(new Image { Source = AppBrand.Image(), Width = 48, Height = 48, HorizontalAlignment = HorizontalAlignment.Left, Margin = new(0, 0, 0, 11) });
         var name = FeatureUi.Text("Desktop Dock", 19); name.FontWeight = FontWeights.SemiBold; brand.Children.Add(name);
         brand.Children.Add(FeatureUi.Text("偏好设置", 11, FeatureUi.Muted)); DockPanel.SetDock(brand, Dock.Top); sidebar.Children.Add(brand);
-        var footer = new StackPanel(); footer.Children.Add(FeatureUi.Text("0.1 preview.18", 10, FeatureUi.Muted));
+        var footer = new StackPanel(); footer.Children.Add(FeatureUi.Text("0.1 preview.19", 10, FeatureUi.Muted));
         status.Margin = new(0, 6, 0, 14); footer.Children.Add(status);
         var exit = FeatureUi.Button("退出并恢复桌面", quit); exit.FontSize = 11; exit.Background = Brushes.Transparent; exit.Foreground = FeatureUi.Muted; footer.Children.Add(exit);
         DockPanel.SetDock(footer, Dock.Bottom); sidebar.Children.Add(footer);
@@ -78,7 +78,7 @@ internal sealed class SettingsWindow : Window
         var widgetList = Section(widgets, "桌面小组件");
         widgetChecks.Add((AddCheck(widgetList, "时间", "显示时、分、秒与本地日期", settings.Widgets.Clock, v => settings.Widgets.Clock = v), () => settings.Widgets.Clock));
         widgetChecks.Add((AddCheck(widgetList, "天气", "查看当前天气与当日高低温", settings.Widgets.Weather, v => settings.Widgets.Weather = v), () => settings.Widgets.Weather));
-        widgetChecks.Add((AddCheck(widgetList, "通透玻璃", "半透明高光，关闭后使用更深的玻璃色调", settings.Widgets.Light, v => settings.Widgets.Light = v), () => settings.Widgets.Light));
+        widgetChecks.Add((AddCheck(widgetList, "轻薄透明背景", "关闭后略微加深透明遮罩，便于阅读", settings.Widgets.Light, v => settings.Widgets.Light = v), () => settings.Widgets.Light));
         var citySection = Section(widgets, "天气城市");
         citySection.Children.Add(Hint("填写城市名称，组件会显示解析后的地区。不自动获取设备位置。"));
         var cityRow = new DockPanel { Margin = new(0, 12, 0, 5) };
@@ -88,7 +88,7 @@ internal sealed class SettingsWindow : Window
         var citySave = FeatureUi.Button("应用城市", SaveCity, true); citySave.Margin = new(9, 0, 0, 0); DockPanel.SetDock(citySave, Dock.Right); cityRow.Children.Add(citySave);
         cityRow.Children.Add(new Border { CornerRadius = new(10), Background = Brush("#F0F4FA"), Child = city }); citySection.Children.Add(cityRow);
         widgets.Children.Add(Hint("拖动组件空白区域调整位置；悬停后点 × 可单独移除。天气由 Open-Meteo 提供，约每 30 分钟刷新，断网时保留上次真实数据。"));
-        Page("桌面小组件", "玻璃时钟与天气，一眼可见，随手可放。", widgets);
+        Page("桌面小组件", "透明时钟与天气，一眼可见，随手可放。", widgets);
 
         var taskbarPage = new StackPanel();
         taskbarPage.Children.Add(new Border { CornerRadius = new(14), Background = Brush("#E8F0FD"), Padding = new(16), Margin = new(0, 0, 0, 15), Child = Hint("先在 Windows 中将主屏任务栏设为顶部，再启用增强。软件不会改变任务栏位置。") });

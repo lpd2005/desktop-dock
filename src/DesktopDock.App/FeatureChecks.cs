@@ -41,6 +41,18 @@ internal static class FeatureChecks
         var encoder = new PngBitmapEncoder(); encoder.Frames.Add(BitmapFrame.Create(bitmap));
         using var stream = File.Create(path); encoder.Save(stream);
     }
+    private static bool HasTransparentSurface(Window window)
+    {
+        window.UpdateLayout();
+        var bitmap = new RenderTargetBitmap((int)Math.Ceiling(window.ActualWidth), (int)Math.Ceiling(window.ActualHeight), 96, 96, PixelFormats.Pbgra32);
+        bitmap.Render(window);
+        byte[] corner = new byte[4], surface = new byte[4];
+        bitmap.CopyPixels(new Int32Rect(0, 0, 1, 1), corner, 4, 0);
+        bitmap.CopyPixels(new Int32Rect(4, bitmap.PixelHeight / 2, 1, 1), surface, 4, 0);
+        nint handle = new System.Windows.Interop.WindowInteropHelper(window).Handle;
+        return window.AllowsTransparency && corner[3] == 0 && surface[3] is > 0 and < 110
+            && !(Native.DwmGetIntAttribute(handle, 38, out int backdrop, sizeof(int)) == 0 && backdrop == 3);
+    }
     public static async Task<Dictionary<string, bool>> Run(string data, bool inspect = false)
     {
         Directory.CreateDirectory(data);
@@ -125,7 +137,7 @@ internal static class FeatureChecks
             Require(panel.Opacity > 0, "PanelReversePreservesCurrentOpacity");
             await reversed; await Task.Delay(200);
             Require(panel.Open && panel.Opacity == 1, "PanelReversesDismissWithoutLateHide");
-            Require(!panel.AllowsTransparency && Native.DwmGetIntAttribute(new System.Windows.Interop.WindowInteropHelper(panel).Handle, 38, out int panelBackdrop, sizeof(int)) == 0 && panelBackdrop == 3, "PanelRequestsNativeDesktopAcrylic");
+            Require(HasTransparentSurface(panel), "PanelHasTransparentPixelsWithoutAcrylicBackdrop");
             await Inspect(panel);
             panel.Dismiss(); await WaitFor(() => !panel.IsVisible, "PanelToggleCanClose");
         }
@@ -138,7 +150,7 @@ internal static class FeatureChecks
             await WaitFor(() => !widgets.WeatherFetchingForChecks, "WeatherFixtureCompletesAsynchronously");
             var windows = widgets.WindowsForChecks.ToArray();
             Require(windows.Length == 2 && windows.All(x => x.Kind != "calendar" && x.IsVisible && !x.Topmost && !x.ShowInTaskbar), "OnlyClockAndWeatherAreVisibleBelowApplications");
-            Require(windows.All(x => !x.AllowsTransparency && Native.DwmGetIntAttribute(x.Handle, 38, out int backdrop, sizeof(int)) == 0 && backdrop == 3), "WidgetsRequestNativeDesktopAcrylic");
+            Require(windows.All(HasTransparentSurface), "WidgetsHaveTransparentPixelsWithoutAcrylicBackdrop");
             var clock = windows.Single(x => x.Kind == "clock");
             var timeText = Children<TextBlock>(clock).Single(x => x.Text.Length == 8 && x.Text.Count(c => c == ':') == 2);
             string beforeTick = timeText.Text; await Task.Delay(1250);

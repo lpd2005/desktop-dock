@@ -177,17 +177,26 @@ Check(transition.Sample(.5) == 0 && !transition.Active, "Reversed transition set
 transition.Begin(1, 1, .22); transition.Sample(1.1); transition.Begin(1, 1.1, .22);
 Check(transition.Sample(1.23) == 1 && !transition.Active, "Repeated targets do not restart an animation");
 var shellDrag = new ShellDragIntent();
+Check(!shellDrag.Update(true, true, true, false, false, 10, 10), "Explorer mouse capture on press is not a file drag");
+Check(!shellDrag.Update(true, true, true, false, false, 11, 11), "Small Explorer click jitter cannot summon Dock");
+shellDrag.Update(false, false, false, false, false, 11, 11);
 Check(!shellDrag.Update(true, true, false, false, false, 10, 10), "Desktop press alone is not a drag");
 Check(shellDrag.Update(true, true, false, false, false, 20, 20), "Desktop movement detects drag without WinEvent");
 Check(shellDrag.Update(true, false, false, false, false, 900, 900), "Drag stays active after leaving its source");
 Check(!shellDrag.Update(false, false, false, false, false, 900, 900), "Release clears the drag hold");
-Check(shellDrag.Update(true, true, true, false, false, 500, 500), "Capture recognizes a drag missed at its start");
+Check(!shellDrag.Update(true, true, true, false, false, 500, 500), "Late Shell capture waits for actual pointer movement");
+Check(shellDrag.Update(true, false, true, false, false, 520, 520), "Movement after late capture recognizes the drag");
 Check(!shellDrag.Update(true, true, true, false, true, 500, 500), "Task switch or Escape clears drag hold");
 Check(!shellDrag.Update(true, false, false, false, false, 1, 1), "Other app press is not a Shell drag");
 Check(!shellDrag.Update(true, false, false, false, false, 100, 100), "Moving an app window does not summon Dock");
 shellDrag.Update(false, false, false, false, false, 0, 0);
 Check(shellDrag.Update(true, false, false, true, false, 0, 0), "Explicit drag event is still supported");
 Check(!shellDrag.Update(false, false, false, true, false, 0, 0), "Stale event cannot keep Dock shown after release");
+Check(!shellDrag.Update(true, true, true, false, false, 100, 100, nearDock: false)
+    && !shellDrag.Update(true, true, true, false, false, 140, 140, nearDock: false), "Moving or selecting inside Explorer away from Dock does not reveal");
+Check(shellDrag.Update(true, false, true, false, false, 200, 800, nearDock: true), "Shell drag reveals after approaching Dock");
+Check(shellDrag.Update(true, false, false, false, false, 200, 500, nearDock: false), "Revealed Dock stays available until drag ends");
+Check(!shellDrag.Update(false, false, false, false, false, 200, 500), "Release clears near-Dock drag recall");
 byte[] reflectedSource = new byte[16 * 16 * 4];
 for (int i = 0; i < reflectedSource.Length; i += 4)
 {

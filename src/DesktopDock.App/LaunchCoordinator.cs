@@ -119,9 +119,9 @@ internal sealed class LaunchCoordinator : IDisposable
         return target;
     }
 
-    internal DockAppState[] GetStates(IReadOnlyList<DockItem> items, nint? foregroundWindow = null)
+    internal DockAppState[] GetStates(IReadOnlyList<DockItem> items, nint? foregroundWindow = null, IEnumerable<nint>? windowsForChecks = null)
     {
-        var windows = Windows().Where(WindowClose.CanClose).ToArray();
+        var windows = (windowsForChecks ?? Windows()).Where(WindowClose.CanClose).ToArray();
         var snapshot = new MatchSnapshot(readAppId);
         nint foreground = foregroundWindow ?? Native.GetAncestor(Native.GetForegroundWindow(), 3);
         var result = new DockAppState[items.Count];

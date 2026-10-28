@@ -93,7 +93,9 @@ internal static class BrowserWindowChecks
         {
             await RegressionProbe.WaitReady(helper, shellData);
             using var state = new LaunchCoordinator();
-            Require(!state.GetStates([new("File Explorer", "explorer.exe")])[0].Running, "ExplorerHelperIsNotAnOpenFileBrowser");
+            // A user's real Explorer window can remain open during the run.
+            // Only our helper is evidence for this auxiliary-window check.
+            Require(!state.GetStates([new("File Explorer", shellHost)], windowsForChecks: [RegressionProbe.Handle(shellData)])[0].Running, "ExplorerHelperIsNotAnOpenFileBrowser");
         }
         finally { RegressionProbe.Close(helper); }
         return checks;

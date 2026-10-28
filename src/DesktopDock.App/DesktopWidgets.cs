@@ -29,11 +29,11 @@ internal sealed class WidgetWindow : Window
         FontFamily = new("Segoe UI Variable Display, Microsoft YaHei UI");
         var content = new DockPanel();
         var header = new DockPanel { Margin = new(0, 0, 0, 8) };
-        var close = LiquidGlass.Button("×", remove); close.Padding = new(4, 0, 4, 0); close.Margin = new(0); close.Opacity = 0; close.Background = Brushes.Transparent; close.ToolTip = "移除此小组件";
-        DockPanel.SetDock(close, Dock.Right); header.Children.Add(close); header.Children.Add(FeatureUi.Text(title, 11, LiquidGlass.Muted));
+        var close = TransparentUi.Button("×", remove); close.Padding = new(4, 0, 4, 0); close.Margin = new(0); close.Opacity = 0; close.Background = Brushes.Transparent; close.ToolTip = "移除此小组件";
+        DockPanel.SetDock(close, Dock.Right); header.Children.Add(close); header.Children.Add(TransparentUi.Text(title, 11, TransparentUi.Muted));
         DockPanel.SetDock(header, Dock.Top); content.Children.Add(header); content.Children.Add(Body);
-        card = LiquidGlass.Card(content, 22, light); card.Padding = new(20, 16, 20, 16);
-        Foreground = LiquidGlass.Ink;
+        card = TransparentUi.Card(content, 22, light); card.Padding = new(20, 16, 20, 16);
+        Foreground = TransparentUi.Ink;
         Content = card;
         MouseEnter += (_, _) => close.Opacity = 1;
         MouseLeave += (_, _) => close.Opacity = 0;
@@ -44,7 +44,7 @@ internal sealed class WidgetWindow : Window
             try { DragMove(); moved(this); e.Handled = true; } catch (InvalidOperationException) { }
         };
         SourceInitialized += (_, _) => FeatureUi.ToolWindow(this, noActivate: true);
-        LiquidGlass.Install(this);
+        TransparentUi.Install(this);
     }
     internal nint Handle => new WindowInteropHelper(this).Handle;
 }
@@ -98,30 +98,30 @@ internal sealed class DesktopWidgets : IDisposable
         configuration = next; weatherGeneration++; fetching = false; cancellation.Cancel(); cancellation.Dispose(); cancellation = new();
         foreach (var window in windows.Values) window.Close(); windows.Clear();
         clockText = clockDate = weatherCity = temperature = weatherDescription = weatherDetail = weatherStatus = weatherGlyph = null;
-        Brush ink = LiquidGlass.Ink;
+        Brush ink = TransparentUi.Ink;
         if (options.Clock)
         {
             var window = Create("clock", "本地时间", 158);
-            clockText = FeatureUi.Text("", 38, ink); clockText.FontWeight = FontWeights.Medium;
+            clockText = TransparentUi.Text("", 38, ink); clockText.FontWeight = FontWeights.Medium;
             Typography.SetNumeralAlignment(clockText, FontNumeralAlignment.Tabular);
-            clockDate = FeatureUi.Text("", 12, LiquidGlass.Muted); clockDate.Margin = new(0, 7, 0, 0);
+            clockDate = TransparentUi.Text("", 12, TransparentUi.Muted); clockDate.Margin = new(0, 7, 0, 0);
             window.Body.Children.Add(clockText); window.Body.Children.Add(clockDate);
         }
         if (options.Weather)
         {
             var window = Create("weather", "天气", 228);
-            weatherCity = FeatureUi.Text(options.City, 16, ink); weatherCity.FontWeight = FontWeights.SemiBold; window.Body.Children.Add(weatherCity);
-            var headline = new DockPanel(); weatherGlyph = FeatureUi.Text("☁", 38, new SolidColorBrush(Color.FromRgb(241, 168, 55))); weatherGlyph.Margin = new(5, 0, 5, 0);
+            weatherCity = TransparentUi.Text(options.City, 16, ink); weatherCity.FontWeight = FontWeights.SemiBold; window.Body.Children.Add(weatherCity);
+            var headline = new DockPanel(); weatherGlyph = TransparentUi.Text("☁", 38, new SolidColorBrush(Color.FromRgb(241, 168, 55))); weatherGlyph.Margin = new(5, 0, 5, 0);
             DockPanel.SetDock(weatherGlyph, Dock.Right); headline.Children.Add(weatherGlyph);
-            temperature = FeatureUi.Text("—°", 43, ink); headline.Children.Add(temperature); window.Body.Children.Add(headline);
-            weatherDescription = FeatureUi.Text("正在获取天气", 12, ink); window.Body.Children.Add(weatherDescription);
-            weatherDetail = FeatureUi.Text("", 10, LiquidGlass.Muted); weatherDetail.Margin = new(0, 6, 0, 0); window.Body.Children.Add(weatherDetail);
+            temperature = TransparentUi.Text("—°", 43, ink); headline.Children.Add(temperature); window.Body.Children.Add(headline);
+            weatherDescription = TransparentUi.Text("正在获取天气", 12, ink); window.Body.Children.Add(weatherDescription);
+            weatherDetail = TransparentUi.Text("", 10, TransparentUi.Muted); weatherDetail.Margin = new(0, 6, 0, 0); window.Body.Children.Add(weatherDetail);
             var footer = new DockPanel { Margin = new(0, 6, 0, 0) };
             var retry = SmallButton("↻", () => _ = RefreshWeather()); retry.ToolTip = "刷新天气"; DockPanel.SetDock(retry, Dock.Right); footer.Children.Add(retry);
             var credit = SmallButton("Open-Meteo", () => Process.Start(new ProcessStartInfo("https://open-meteo.com/") { UseShellExecute = true }));
-            credit.FontSize = 8; credit.Padding = new(0); credit.Background = Brushes.Transparent; credit.Foreground = LiquidGlass.Muted; credit.ToolTip = "天气数据来源 · Open-Meteo";
+            credit.FontSize = 8; credit.Padding = new(0); credit.Background = Brushes.Transparent; credit.Foreground = TransparentUi.Muted; credit.ToolTip = "天气数据来源 · Open-Meteo";
             DockPanel.SetDock(credit, Dock.Right); footer.Children.Add(credit);
-            weatherStatus = FeatureUi.Text("", 9, LiquidGlass.Muted); weatherStatus.ToolTip = "天气数据：Open-Meteo · 每 30 分钟更新"; footer.Children.Add(weatherStatus); window.Body.Children.Add(footer);
+            weatherStatus = TransparentUi.Text("", 9, TransparentUi.Muted); weatherStatus.ToolTip = "天气数据：Open-Meteo · 每 30 分钟更新"; footer.Children.Add(weatherStatus); window.Body.Children.Add(footer);
             if (lastWeather?.City == options.City) DisplayWeather(lastWeather, stale: weatherFailed || !WeatherFresh());
         }
         date = DateOnly.MinValue; RefreshTime();
@@ -130,7 +130,7 @@ internal sealed class DesktopWidgets : IDisposable
         if (options.Clock) clockTimer.Start(); else clockTimer.Stop();
         if (options.Weather) { weatherTimer.Start(); if (!WeatherFresh()) _ = RefreshWeather(); } else weatherTimer.Stop();
     }
-    private static Button SmallButton(string text, Action action) { var button = LiquidGlass.Button(text, action); button.Padding = new(5, 2, 5, 2); button.FontSize = 10; return button; }
+    private static Button SmallButton(string text, Action action) { var button = TransparentUi.Button(text, action); button.Padding = new(5, 2, 5, 2); button.FontSize = 10; return button; }
     private WidgetWindow Create(string kind, string title, double height)
     {
         var window = new WidgetWindow(kind, title, height, settings.Widgets.Light, () => Remove(kind), Moved);

@@ -4,16 +4,16 @@ namespace DesktopDock.Core;
 // capture or input surface is needed before OLE calls our actual drop target.
 public sealed class ShellDragIntent
 {
-    private bool held, candidate;
+    private bool held, candidate, confirmed;
     private double originX, originY;
     public bool Active { get; private set; }
 
     public bool Update(bool down, bool shellSource, bool captured, bool notified,
-        bool cancelled, double x, double y)
+        bool cancelled, double x, double y, bool nearDock = true)
     {
         if (!down || cancelled)
         {
-            held = candidate = Active = false;
+            held = candidate = confirmed = Active = false;
             return false;
         }
         if (!held)
@@ -23,7 +23,10 @@ public sealed class ShellDragIntent
         // Capture can identify a Shell source even if the first poll occurred
         // after the pointer had already left the desktop or Explorer window.
         candidate |= shellSource && captured;
-        Active |= notified || candidate && (captured || DockReorder.Moved(x - originX, y - originY));
+        // Explorer captures the pointer during ordinary clicks too. Capture
+        // identifies a possible source, never sufficient evidence of a drag.
+        confirmed |= notified || candidate && DockReorder.Moved(x - originX, y - originY);
+        Active |= confirmed && nearDock;
         return Active;
     }
 }
