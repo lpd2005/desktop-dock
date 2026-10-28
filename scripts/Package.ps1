@@ -27,6 +27,7 @@ Copy-Item -LiteralPath README.md -Destination (Join-Path $taskOutput 'README.md'
 Copy-Item -LiteralPath docs/DESIGN.md -Destination (Join-Path $taskOutput 'DESIGN.md')
 Copy-Item -LiteralPath docs/VALIDATION.md -Destination (Join-Path $taskOutput 'VALIDATION.md')
 Copy-Item -LiteralPath docs/REFACTORING.md -Destination (Join-Path $taskOutput 'REFACTORING.md')
+Copy-Item -LiteralPath docs/USER_GUIDE.md -Destination (Join-Path $taskOutput '使用说明.txt')
 Copy-Item -LiteralPath packaging/SafePreview.cmd -Destination (Join-Path $taskOutput '安全预览.cmd')
 Copy-Item -LiteralPath packaging/RecoverDesktop.cmd -Destination (Join-Path $taskOutput '恢复桌面.cmd')
 Copy-Item -LiteralPath packaging/RecoverTaskbar.cmd -Destination (Join-Path $taskOutput '恢复任务栏.cmd')
@@ -38,7 +39,7 @@ foreach ($taskNotice in @('LICENSE.txt','ThirdPartyNotices.txt')) {
         Copy-Item -LiteralPath $taskSourceNotice -Destination (Join-Path $taskOutput ("licenses/Microsoft.NET." + $taskNotice))
     }
 }
-$taskForbidden = Get-ChildItem -LiteralPath $taskOutput -Recurse -File | Where-Object { $_.Name -in @('settings.json','desktop-state.json','taskbar-state.json','last-error.txt','smoke-report.json','feature-report.json','weather-cache.json') -or $_.Extension -in @('.log','.dmp','.etl','.pfx','.pem') }
+$taskForbidden = Get-ChildItem -LiteralPath $taskOutput -Recurse -File | Where-Object { $_.Name -in @('settings.json','desktop-state.json','taskbar-state.json','last-error.txt','smoke-report.json','feature-report.json','distribution-report.json','window-preview-report.json','update-state.json','weather-cache.json') -or $_.Extension -in @('.log','.dmp','.etl','.pfx','.pem') }
 if ($taskForbidden) { throw 'Package contains local runtime data.' }
 $taskZip = "$taskOutput.zip"
 Compress-Archive -Path (Join-Path $taskOutput '*') -DestinationPath $taskZip -Force

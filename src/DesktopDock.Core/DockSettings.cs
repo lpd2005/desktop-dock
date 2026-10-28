@@ -16,6 +16,7 @@ public sealed class DockSettings
     public bool AutoHide { get; set; }
     public bool ReducedMotion { get; set; }
     public bool WindowPreviews { get; set; } = true;
+    public bool AutoCheckUpdates { get; set; } = true;
     public bool TaskbarEnhancement { get; set; }
     public bool TaskbarAutoHide { get; set; } = true;
     public bool TaskbarGlass { get; set; } = true;

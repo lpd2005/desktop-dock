@@ -8,6 +8,7 @@ internal sealed class DesktopIcons(string dataDirectory) : IDisposable
     private readonly string journal = Path.Combine(dataDirectory, "desktop-state.json");
     private bool? originalVisible;
     private bool hiding;
+    internal static bool ShellReady => FindView() != 0;
 
     private static nint FindView()
     {

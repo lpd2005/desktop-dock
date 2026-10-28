@@ -8,6 +8,12 @@ namespace DesktopDock.App;
 
 internal sealed partial class Controller
 {
+    public async Task RunDistributionTest()
+    {
+        var checks = await DistributionChecks.Run(Path.Combine(data, "distribution-checks"));
+        File.WriteAllText(Path.Combine(data, "distribution-report.json"), JsonSerializer.Serialize(checks, new JsonSerializerOptions { WriteIndented = true }));
+        Quit();
+    }
     public async Task RunWindowPreviewTest(bool inspect = false)
     {
         dock.UseOcclusionWindowsForChecks(() => []);

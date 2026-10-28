@@ -25,7 +25,7 @@ internal sealed class SettingsWindow : Window
     private static readonly ControlTemplate switchTemplate = CreateSwitchTemplate();
     private sealed record PinnedView(string Name, ImageSource Icon);
 
-    public SettingsWindow(DockSettings settings, Action apply, Action reload, Action quit, TaskbarEnhancement taskbar)
+    public SettingsWindow(DockSettings settings, Action apply, Action reload, Action quit, TaskbarEnhancement taskbar, FrameworkElement? systemPage = null)
     {
         this.settings = settings; this.apply = apply; this.reload = reload;
         Title = "Desktop Dock · 设置"; Icon = AppBrand.Image(); ShowInTaskbar = false; WindowStyle = WindowStyle.ToolWindow;
@@ -121,6 +121,7 @@ internal sealed class SettingsWindow : Window
         actions.Children.Add(FeatureUi.Button("＋ 添加应用", AddApplication, true)); actions.Children.Add(FeatureUi.Button("＋ 文件夹", AddFolder)); actions.Children.Add(FeatureUi.Button("移除所选", RemoveSelected)); pinnedSection.Children.Add(actions);
         pinned.Children.Add(Hint("桌面快捷方式可直接拖入 Dock；在 Dock 中拖动排序，拖远松手仅移除入口。最左侧桌面面板和最右侧设置入口会始终保留。"));
         Page("固定应用", "管理常用入口，原文件始终保留在原处。", pinned);
+        if (systemPage is not null) Page("启动与更新", "登录后自动启动，及时获取新版本。", systemPage);
         RefreshItems(); SelectPage(0);
     }
     private static Brush Brush(string value) => (Brush)new BrushConverter().ConvertFromString(value)!;
@@ -137,6 +138,8 @@ internal sealed class SettingsWindow : Window
         for (int i = 0; i < pages.Count; i++) { pages[i].Button.Background = i == index ? Brush("#DCE9FB") : Brushes.Transparent; pages[i].Button.Foreground = i == index ? FeatureUi.Blue : FeatureUi.Ink; }
     }
     internal void SelectPageForChecks(int index) => SelectPage(index);
+    internal void SelectSystemPage() { if (pages.Count > 4) SelectPage(4); }
+    internal static ControlTemplate SwitchTemplate => switchTemplate;
     private FrameworkElement BuildPreview()
     {
         var panel = new DockPanel(); var title = FeatureUi.Text("Dock 预览", 12); DockPanel.SetDock(title, Dock.Top); panel.Children.Add(title);

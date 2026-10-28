@@ -302,4 +302,29 @@ foreach (double availableHeight in new[] { 160d, 700 })
 }
 Check(System.Text.Json.JsonSerializer.Deserialize<DockSettings>("{}")!.WindowPreviews, "Old settings enable preview without migration");
 Check(!System.Text.Json.JsonSerializer.Deserialize<DockSettings>("{\"WindowPreviews\":false}")!.WindowPreviews, "Disabled previews persist");
+foreach (var invalid in new[] { "", "1.0", "01.0.0", "1.0.0-", "1.0.0-preview.01", "1.0.0-预览", "-1.0.0", "2147483648.0.0", "1.0.0+", "1.0.0-a..b" })
+    Check(!ReleaseVersion.TryParse(invalid, out _), "Malformed update version is rejected");
+var versionOrder = new[] { "0.1.0-alpha", "0.1.0-preview.2", "0.1.0-preview.9", "0.1.0-preview.10", "0.1.0-preview.23", "0.1.0", "0.1.1", "0.2.0", "1.0.0" };
+for (int i = 0; i < versionOrder.Length; i++)
+for (int j = 0; j < versionOrder.Length; j++)
+{
+    Check(ReleaseVersion.TryParse(versionOrder[i], out var first) && ReleaseVersion.TryParse("v" + versionOrder[j], out var second)
+        && Math.Sign(first.CompareTo(second)) == Math.Sign(i.CompareTo(j)), "Stable and numeric prerelease versions sort correctly");
+}
+string UpdateFixture(string version, bool draft = false, bool pre = true, string host = "github.com", string digest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", object? bytes = null) =>
+    System.Text.Json.JsonSerializer.Serialize(new[] { new { tag_name = "v" + version, draft, prerelease = pre, body = "Example notes", assets = new[] { new {
+        name = $"DesktopDock-{version}-Setup-x64.exe", state = "uploaded", size = bytes ?? 123L, digest,
+        browser_download_url = $"https://{host}/lpd2005/desktop-dock/releases/download/v{version}/DesktopDock-{version}-Setup-x64.exe" } } } });
+ReleaseVersion.TryParse("0.1.0-preview.22", out var previewVersion);
+ReleaseVersion.TryParse("0.1.0", out var stableVersion);
+Check(ReleaseFeed.Latest(UpdateFixture("0.1.0-preview.23"), previewVersion)?.Version.ToString() == "0.1.0-preview.23", "Preview channel receives next preview");
+Check(ReleaseFeed.Latest(UpdateFixture("0.1.1", pre: false), stableVersion)?.Version.ToString() == "0.1.1", "Stable channel receives stable updates");
+Check(ReleaseFeed.Latest(UpdateFixture("0.2.0-preview.1"), stableVersion) is null, "Stable users do not receive previews");
+Check(ReleaseFeed.Latest(UpdateFixture("0.1.0-preview.21"), previewVersion) is null, "Updater never downgrades");
+Check(ReleaseFeed.Latest(UpdateFixture("0.1.0-preview.23", draft: true), previewVersion) is null, "Draft release is never installable");
+Check(ReleaseFeed.Latest(UpdateFixture("0.1.0-preview.23", host: "example.invalid"), previewVersion) is null, "Installer must come from the fixed repository URL");
+Check(ReleaseFeed.Latest(UpdateFixture("0.1.0-preview.23", digest: ""), previewVersion) is null, "Installer without SHA-256 is rejected");
+Check(ReleaseFeed.Latest(UpdateFixture("0.1.0-preview.23", bytes: "123"), previewVersion) is null, "Wrong asset size type is safely ignored");
+Check(ReleaseFeed.Latest(UpdateFixture("0.1.0-preview.23", bytes: ReleaseFeed.MaximumBytes + 1), previewVersion) is null, "Oversized installer is rejected");
+Check(System.Text.Json.JsonSerializer.Deserialize<DockSettings>("{}")!.AutoCheckUpdates, "Existing settings enable low frequency update checks");
 Console.WriteLine($"PASS: {checks} geometry, persistence and interaction checks.");

@@ -1,0 +1,35 @@
+name: Build Windows release
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish after building and checking the installer
+        type: boolean
+        default: false
+permissions:
+  contents: write
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  package:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+      - name: Build portable package and installer
+        shell: pwsh
+        run: ./scripts/Installer.ps1
+      - name: Check install, upgrade and uninstall
+        shell: pwsh
+        run: ./scripts/Test-Installer.ps1
+      - name: Create release draft or publish
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PUBLISH_RELEASE: ${{ github.event_name == 'push' || inputs.publish }}
+        run: ./scripts/Publish-Release.ps1 -Publish:($env:PUBLISH_RELEASE -eq 'true')
