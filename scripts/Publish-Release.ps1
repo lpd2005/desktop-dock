@@ -47,8 +47,9 @@ try {
     $taskAssets += Join-Path $taskOutput '使用说明.txt'
     & $taskGh release upload $taskTag @taskAssets --repo lpd2005/desktop-dock --clobber
     if ($LASTEXITCODE -ne 0) { throw 'Release asset upload failed; draft retained.' }
-    $taskPublishedAssets = (& $taskGh api "repos/lpd2005/desktop-dock/releases/tags/$taskTag") | ConvertFrom-Json
-    $taskSetup = @($taskPublishedAssets.assets | Where-Object name -eq $taskNames[0])
+    $taskPublishedAssets = @(((& $taskGh api 'repos/lpd2005/desktop-dock/releases?per_page=100') | ConvertFrom-Json) | Where-Object tag_name -eq $taskTag)
+    if ($taskPublishedAssets.Count -ne 1) { throw 'Release draft metadata is unavailable; draft retained.' }
+    $taskSetup = @($taskPublishedAssets[0].assets | Where-Object name -eq $taskNames[0])
     if ($taskSetup.Count -ne 1 -or $taskSetup[0].digest -ne ('sha256:' + (Get-FileHash -LiteralPath $taskAssets[0] -Algorithm SHA256).Hash.ToLowerInvariant())) { throw 'Uploaded installer digest mismatch; draft retained.' }
     if ($Publish) {
         & $taskGh release edit $taskTag --repo lpd2005/desktop-dock --draft=false
