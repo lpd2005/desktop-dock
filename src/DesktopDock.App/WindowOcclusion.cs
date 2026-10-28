@@ -22,7 +22,6 @@ internal sealed class WindowOcclusion(nint dock)
         {
             if (hwnd == dock || !Native.IsWindowVisible(hwnd) || Native.IsIconic(hwnd)) return false;
             if (Native.DwmGetIntAttribute(hwnd, 14, out int cloaked, sizeof(int)) == 0 && cloaked != 0) return false;
-            long style = Native.GetWindowLongPtr(hwnd, -16).ToInt64();
             long extended = Native.GetWindowLongPtr(hwnd, -20).ToInt64();
             Native.GetWindowThreadProcessId(hwnd, out uint pid);
             // Our settings, dialogs, menus and tooltips are Dock UI, not app coverage.

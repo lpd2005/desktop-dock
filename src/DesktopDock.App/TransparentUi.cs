@@ -14,6 +14,7 @@ internal static class TransparentUi
     public static readonly Brush Ink = new SolidColorBrush(Color.FromRgb(247, 250, 255));
     public static readonly Brush Muted = new SolidColorBrush(Color.FromRgb(220, 230, 241));
     private static readonly DropShadowEffect labelShadow = CreateLabelShadow();
+    private static readonly Style scrollBarStyle = CreateScrollBarStyle();
     private static DropShadowEffect CreateLabelShadow()
     {
         var shadow = new DropShadowEffect { Color = Colors.Black, BlurRadius = 3, ShadowDepth = 1, Opacity = .85 };
@@ -51,7 +52,8 @@ internal static class TransparentUi
             { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }, FillBehavior = FillBehavior.Stop });
         }
     }
-    public static Style ScrollBarStyle()
+    public static Style ScrollBarStyle() => scrollBarStyle;
+    private static Style CreateScrollBarStyle()
     {
         var style = new Style(typeof(ScrollBar));
         style.Setters.Add(new Setter(FrameworkElement.WidthProperty, 6d));

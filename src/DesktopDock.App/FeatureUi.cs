@@ -13,6 +13,7 @@ internal static class FeatureUi
     public static readonly Brush Ink = new SolidColorBrush(Color.FromRgb(38, 47, 64));
     public static readonly Brush Muted = new SolidColorBrush(Color.FromRgb(125, 136, 153));
     public static readonly Brush Blue = new SolidColorBrush(Color.FromRgb(55, 131, 228));
+    private static readonly ControlTemplate buttonTemplate = CreateButtonTemplate();
     public static TextBlock Text(string text, double size = 13, Brush? color = null) => new()
     { Text = text, FontSize = size, Foreground = color ?? Ink, VerticalAlignment = VerticalAlignment.Center };
 
@@ -21,6 +22,13 @@ internal static class FeatureUi
         var button = new Button { Content = text, Padding = new(13, 8, 13, 8), Margin = new(3), Cursor = System.Windows.Input.Cursors.Hand,
             FontSize = 12, Foreground = prominent ? Brushes.White : Ink,
             Background = prominent ? Blue : new SolidColorBrush(Color.FromArgb(105, 215, 225, 238)), BorderThickness = new(0) };
+        button.Template = buttonTemplate;
+        button.MouseEnter += (_, _) => button.Opacity = .78;
+        button.MouseLeave += (_, _) => button.Opacity = 1;
+        button.Click += (_, _) => action(); return button;
+    }
+    private static ControlTemplate CreateButtonTemplate()
+    {
         var border = new FrameworkElementFactory(typeof(Border));
         border.SetValue(Border.CornerRadiusProperty, new CornerRadius(10));
         border.SetBinding(Border.BackgroundProperty, new System.Windows.Data.Binding("Background") { RelativeSource = new(RelativeSourceMode.TemplatedParent) });
@@ -29,10 +37,7 @@ internal static class FeatureUi
         presenter.SetValue(ContentPresenter.HorizontalAlignmentProperty, HorizontalAlignment.Center);
         presenter.SetValue(ContentPresenter.VerticalAlignmentProperty, VerticalAlignment.Center);
         border.AppendChild(presenter);
-        button.Template = new ControlTemplate(typeof(Button)) { VisualTree = border };
-        button.MouseEnter += (_, _) => button.Opacity = .78;
-        button.MouseLeave += (_, _) => button.Opacity = 1;
-        button.Click += (_, _) => action(); return button;
+        return new ControlTemplate(typeof(Button)) { VisualTree = border };
     }
     public static Border Card(UIElement content, double radius = 24) => new()
     {

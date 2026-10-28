@@ -178,7 +178,7 @@ internal sealed class DesktopWidgets : IDisposable
             var result = await weatherService.Fetch(city, token);
             if (disposed || version != weatherGeneration) return;
             lastWeather = result; weatherFailed = false; DisplayWeather(result, stale: false);
-            try { string temporary = cacheFile + ".tmp"; File.WriteAllText(temporary, JsonSerializer.Serialize(result)); File.Move(temporary, cacheFile, true); }
+            try { AtomicJson.Write(cacheFile, result); }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
         }
         catch (Exception e) when (e is HttpRequestException or TaskCanceledException or JsonException or InvalidOperationException or KeyNotFoundException)

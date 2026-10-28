@@ -54,8 +54,6 @@ public static class SettingsStore
     {
         settings.Normalize();
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
-        string temporary = path + ".tmp";
-        File.WriteAllText(temporary, JsonSerializer.Serialize(settings, Options));
-        File.Move(temporary, path, overwrite: true);
+        AtomicJson.Write(path, settings, Options);
     }
 }

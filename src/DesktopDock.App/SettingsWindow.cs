@@ -21,6 +21,8 @@ internal sealed class SettingsWindow : Window
     private readonly Dictionary<string, ImageSource> iconCache = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<Image> previewIcons = [];
     private bool refreshingWidgets;
+    private static readonly ControlTemplate sliderTemplate = CreateSliderTemplate();
+    private static readonly ControlTemplate switchTemplate = CreateSwitchTemplate();
     private sealed record PinnedView(string Name, ImageSource Icon);
 
     public SettingsWindow(DockSettings settings, Action apply, Action reload, Action quit, TaskbarEnhancement taskbar)
@@ -43,7 +45,7 @@ internal sealed class SettingsWindow : Window
         brand.Children.Add(new Image { Source = AppBrand.Image(), Width = 48, Height = 48, HorizontalAlignment = HorizontalAlignment.Left, Margin = new(0, 0, 0, 11) });
         var name = FeatureUi.Text("Desktop Dock", 19); name.FontWeight = FontWeights.SemiBold; brand.Children.Add(name);
         brand.Children.Add(FeatureUi.Text("偏好设置", 11, FeatureUi.Muted)); DockPanel.SetDock(brand, Dock.Top); sidebar.Children.Add(brand);
-        var footer = new StackPanel(); footer.Children.Add(FeatureUi.Text("0.1 preview.19", 10, FeatureUi.Muted));
+        var footer = new StackPanel(); footer.Children.Add(FeatureUi.Text(AppVersion.Short, 10, FeatureUi.Muted));
         status.Margin = new(0, 6, 0, 14); footer.Children.Add(status);
         var exit = FeatureUi.Button("退出并恢复桌面", quit); exit.FontSize = 11; exit.Background = Brushes.Transparent; exit.Foreground = FeatureUi.Muted; footer.Children.Add(exit);
         DockPanel.SetDock(footer, Dock.Bottom); sidebar.Children.Add(footer);
@@ -159,7 +161,21 @@ internal sealed class SettingsWindow : Window
     {
         var controls = new StackPanel { Orientation = Orientation.Horizontal };
         var slider = new Slider { Minimum = min, Maximum = max, Value = value, Width = 135, VerticalAlignment = VerticalAlignment.Center, SmallChange = factor ? .05 : 1, IsMoveToPointEnabled = true };
-        slider.Template = (ControlTemplate)System.Windows.Markup.XamlReader.Parse("""
+        slider.Template = sliderTemplate;
+        var caption = FeatureUi.Text(factor ? $"{value:0.00}×" : $"{value:0}", 11); caption.Width = 43; caption.TextAlignment = TextAlignment.Right;
+        slider.ValueChanged += (_, _) => { setter(slider.Value); caption.Text = factor ? $"{slider.Value:0.00}×" : $"{slider.Value:0}"; foreach (var icon in previewIcons) icon.Width = icon.Height = Math.Clamp(settings.IconSize * .72, 24, 48); apply(); status.Text = "设置已保存"; };
+        controls.Children.Add(slider); controls.Children.Add(caption); Row(content, title, description, controls);
+    }
+    private CheckBox AddCheck(Panel content, string title, string description, bool value, Action<bool> setter)
+    {
+        var box = new CheckBox { IsChecked = value, Width = 38, Height = 22, Cursor = System.Windows.Input.Cursors.Hand };
+        System.Windows.Automation.AutomationProperties.SetName(box, title);
+        box.Template = switchTemplate;
+        box.Checked += (_, _) => { if (!refreshingWidgets) { setter(true); apply(); status.Text = "设置已保存"; } };
+        box.Unchecked += (_, _) => { if (!refreshingWidgets) { setter(false); apply(); status.Text = "设置已保存"; } };
+        Row(content, title, description, box); return box;
+    }
+    private static ControlTemplate CreateSliderTemplate() => (ControlTemplate)System.Windows.Markup.XamlReader.Parse("""
             <ControlTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" TargetType="{x:Type Slider}">
               <Grid Height="24">
                 <Track x:Name="PART_Track" VerticalAlignment="Center" Minimum="{TemplateBinding Minimum}" Maximum="{TemplateBinding Maximum}" Value="{Binding Value, RelativeSource={RelativeSource TemplatedParent}, Mode=TwoWay}" IsDirectionReversed="{TemplateBinding IsDirectionReversed}">
@@ -170,22 +186,13 @@ internal sealed class SettingsWindow : Window
               </Grid>
             </ControlTemplate>
             """);
-        var caption = FeatureUi.Text(factor ? $"{value:0.00}×" : $"{value:0}", 11); caption.Width = 43; caption.TextAlignment = TextAlignment.Right;
-        slider.ValueChanged += (_, _) => { setter(slider.Value); caption.Text = factor ? $"{slider.Value:0.00}×" : $"{slider.Value:0}"; foreach (var icon in previewIcons) icon.Width = icon.Height = Math.Clamp(settings.IconSize * .72, 24, 48); apply(); status.Text = "设置已保存"; };
-        controls.Children.Add(slider); controls.Children.Add(caption); Row(content, title, description, controls);
-    }
-    private CheckBox AddCheck(Panel content, string title, string description, bool value, Action<bool> setter)
+    private static ControlTemplate CreateSwitchTemplate()
     {
-        var box = new CheckBox { IsChecked = value, Width = 38, Height = 22, Cursor = System.Windows.Input.Cursors.Hand };
-        System.Windows.Automation.AutomationProperties.SetName(box, title);
         var track = new FrameworkElementFactory(typeof(Border)); track.Name = "Track"; track.SetValue(Border.CornerRadiusProperty, new CornerRadius(11)); track.SetValue(Border.BackgroundProperty, Brush("#CCD5E3"));
         var thumb = new FrameworkElementFactory(typeof(Border)); thumb.Name = "Thumb"; thumb.SetValue(Border.WidthProperty, 16d); thumb.SetValue(Border.HeightProperty, 16d); thumb.SetValue(Border.CornerRadiusProperty, new CornerRadius(8)); thumb.SetValue(Border.BackgroundProperty, Brushes.White); thumb.SetValue(Border.MarginProperty, new Thickness(3)); thumb.SetValue(Border.HorizontalAlignmentProperty, HorizontalAlignment.Left); track.AppendChild(thumb);
         var template = new ControlTemplate(typeof(CheckBox)) { VisualTree = track };
         var enabled = new Trigger { Property = CheckBox.IsCheckedProperty, Value = true }; enabled.Setters.Add(new Setter(Border.BackgroundProperty, FeatureUi.Blue, "Track")); enabled.Setters.Add(new Setter(HorizontalAlignmentProperty, HorizontalAlignment.Right, "Thumb")); template.Triggers.Add(enabled);
-        box.Template = template;
-        box.Checked += (_, _) => { if (!refreshingWidgets) { setter(true); apply(); status.Text = "设置已保存"; } };
-        box.Unchecked += (_, _) => { if (!refreshingWidgets) { setter(false); apply(); status.Text = "设置已保存"; } };
-        Row(content, title, description, box); return box;
+        return template;
     }
     internal void RefreshWidgets()
     {

@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.IO;
 using System.Text.Json;
+using DesktopDock.Core;
 
 namespace DesktopDock.App;
 
@@ -14,9 +15,7 @@ internal static class TaskbarRecovery
     public static void Save(string data, TaskbarRecoveryState state)
     {
         Directory.CreateDirectory(data);
-        string file = Journal(data);
-        File.WriteAllText(file + ".tmp", JsonSerializer.Serialize(state));
-        File.Move(file + ".tmp", file, true);
+        AtomicJson.Write(Journal(data), state);
     }
     public static bool Restore(string data)
     {

@@ -1,4 +1,3 @@
-using System.Globalization;
 using System.Text.Json;
 
 namespace DesktopDock.Core;
@@ -88,12 +87,13 @@ public static class DesktopLibrary
 
     public static DockItem[] Filter(IEnumerable<DockItem> items, IEnumerable<DesktopGroup> groups, string groupId, string query)
     {
+        string search = query.Trim();
         var allGroups = groups.ToArray();
         var targets = groupId == "all" ? null : (groupId == "ungrouped"
             ? allGroups.SelectMany(x => x.Targets) : allGroups.FirstOrDefault(x => x.Id == groupId)?.Targets ?? [])
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         return items.Where(x => (targets is null || (groupId == "ungrouped" ? !targets.Contains(x.Target) : targets.Contains(x.Target)))
-            && x.Name.Contains(query.Trim(), StringComparison.CurrentCultureIgnoreCase)).ToArray();
+            && x.Name.Contains(search, StringComparison.CurrentCultureIgnoreCase)).ToArray();
     }
 
     public static void Assign(List<DesktopGroup> groups, string target, string? groupId)

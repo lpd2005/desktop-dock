@@ -4,7 +4,9 @@ namespace DesktopDock.App;
 
 internal static class AppBrand
 {
-    public static BitmapImage Image()
+    private static readonly Lazy<BitmapImage> image = new(CreateImage);
+    public static BitmapImage Image() => image.Value;
+    private static BitmapImage CreateImage()
     {
         var image = new BitmapImage(new Uri("pack://application:,,,/Assets/Brand.png"));
         image.Freeze(); return image;

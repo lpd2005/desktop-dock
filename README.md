@@ -2,7 +2,7 @@
 
 面向 Windows 11 的原生桌面 Dock。使用系统图形合成、可恢复的桌面图标隐藏和 macOS 风格的连续悬停放大。
 
-> 当前为 0.1.0-preview.19 技术预览，已有可运行源码，尚未发布稳定版本。
+> 当前为 0.1.0-preview.20 技术预览，已有可运行源码，尚未发布稳定版本。
 
 ## 已实现
 
@@ -106,6 +106,7 @@ powershell -ExecutionPolicy Bypass -File scripts/Package.ps1
 - [开发路线](docs/ROADMAP.md)
 - [交互设计与问题修订](docs/DESIGN.md)
 - [验证记录与局限](docs/VALIDATION.md)
+- [内部代码整理](docs/REFACTORING.md)
 - [更新记录](CHANGELOG.md)
 - [提交与发布流程](docs/PUBLISHING.md)
 

@@ -220,12 +220,17 @@ internal static class FeatureChecks
                 Require(preferences.IsVisible && Children<ScrollViewer>(preferences).Any(), "SettingsPageRenders" + name);
             }
             preferences.SelectPageForChecks(0); preferences.UpdateLayout();
+            var sliders = Children<Slider>(preferences).ToArray();
+            Require(sliders.All(x => ReferenceEquals(x.Template, sliders[0].Template)), "SettingsSlidersShareTemplate");
             Children<Slider>(preferences).First().Value = 56;
             Require(sampleSettings.IconSize == 56 && applied == 1, "SettingsSliderStillAppliesImmediately");
             preferences.SelectPageForChecks(1); preferences.UpdateLayout();
             var time = Children<CheckBox>(preferences).Single(x => System.Windows.Automation.AutomationProperties.GetName(x) == "时间");
             time.IsChecked = false;
             Require(!sampleSettings.Widgets.Clock && applied == 2, "SettingsSwitchPreservesWidgetAction");
+            var weatherSwitch = Children<CheckBox>(preferences).Single(x => System.Windows.Automation.AutomationProperties.GetName(x) == "天气");
+            Require(ReferenceEquals(time.Template, weatherSwitch.Template) && weatherSwitch.IsChecked == true && sampleSettings.Widgets.Weather,
+                "SharedSwitchTemplateKeepsIndependentState");
             sampleSettings.Widgets.Clock = true; preferences.RefreshWidgets();
             Require(time.IsChecked == true && applied == 2, "SettingsRefreshDoesNotApplyAgain");
             preferences.SelectPageForChecks(3); preferences.UpdateLayout();
