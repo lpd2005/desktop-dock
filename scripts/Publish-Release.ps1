@@ -42,15 +42,18 @@ try {
         & $taskGh @taskArgs
         if ($LASTEXITCODE -ne 0) { throw 'Release draft creation failed.' }
     }
-    Copy-Item -LiteralPath docs/USER_GUIDE.md -Destination (Join-Path $taskOutput '使用说明.txt')
+    Copy-Item -LiteralPath docs/USER_GUIDE.md -Destination (Join-Path $taskOutput 'UserGuide.txt')
     $taskAssets = $taskNames | ForEach-Object { Join-Path $taskOutput $_ }
-    $taskAssets += Join-Path $taskOutput '使用说明.txt'
+    $taskAssets += Join-Path $taskOutput 'UserGuide.txt'
     & $taskGh release upload $taskTag @taskAssets --repo lpd2005/desktop-dock --clobber
     if ($LASTEXITCODE -ne 0) { throw 'Release asset upload failed; draft retained.' }
     $taskPublishedAssets = @(((& $taskGh api 'repos/lpd2005/desktop-dock/releases?per_page=100') | ConvertFrom-Json) | Where-Object tag_name -eq $taskTag)
     if ($taskPublishedAssets.Count -ne 1) { throw 'Release draft metadata is unavailable; draft retained.' }
-    $taskSetup = @($taskPublishedAssets[0].assets | Where-Object name -eq $taskNames[0])
-    if ($taskSetup.Count -ne 1 -or $taskSetup[0].digest -ne ('sha256:' + (Get-FileHash -LiteralPath $taskAssets[0] -Algorithm SHA256).Hash.ToLowerInvariant())) { throw 'Uploaded installer digest mismatch; draft retained.' }
+    if ($taskPublishedAssets[0].assets.Count -ne $taskAssets.Count) { throw 'Unexpected release assets; draft retained.' }
+    foreach ($taskLocalAsset in $taskAssets) {
+        $taskUploaded = @($taskPublishedAssets[0].assets | Where-Object name -eq (Split-Path -Leaf $taskLocalAsset))
+        if ($taskUploaded.Count -ne 1 -or $taskUploaded[0].digest -ne ('sha256:' + (Get-FileHash -LiteralPath $taskLocalAsset -Algorithm SHA256).Hash.ToLowerInvariant())) { throw 'Uploaded asset digest mismatch; draft retained.' }
+    }
     if ($Publish) {
         & $taskGh release edit $taskTag --repo lpd2005/desktop-dock --draft=false
         if ($LASTEXITCODE -ne 0) { throw 'Release publication failed; draft retained.' }

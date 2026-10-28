@@ -33,7 +33,7 @@
 
 - 唯一版本来源是 `Directory.Build.props`，标签必须为 `v` 加该版本。预发布使用 `0.1.0-preview.23` 一类语义版本，不重复使用已经发布的版本号。
 - 先修改版本、更新 CHANGELOG 和 `docs/releases/版本号.md`，完成构建与实际运行 / 恢复检查，再提交源码。使用 `scripts/Installer.ps1` 生成最终运行包；生成后可用 `scripts/Test-Installer.ps1` 在干净配置中验证安装、覆盖升级、卸载、启动项清理和配置保护。
-- 公开资产是 `DesktopDock-版本号-Setup-x64.exe`、`DesktopDock-版本号-win-x64.zip`、`SHA256SUMS.txt` 和 `使用说明.txt`。先检查所有内容，不能上传整个 artifacts 目录。
+- 公开资产是 `DesktopDock-版本号-Setup-x64.exe`、`DesktopDock-版本号-win-x64.zip`、`SHA256SUMS.txt` 和 `UserGuide.txt`（中文版说明）。附件名使用 ASCII，避免 GitHub 自动改名；安装目录内的说明仍为中文文件名。先检查所有内容，不能上传整个 artifacts 目录。
 - 本地运行 `scripts/Publish-Release.ps1` 创建草稿并上传这些文件；明确确认公开后加 `-Publish`。脚本拒绝替换已经公开的版本，核对标签、源提交、文件摘要和 GitHub 上传摘要后才发布。仅使用现有 GitHub 登录，不把凭据放入安装包。
 - 也可以推送与项目版本一致的标签，触发 `.github/workflows/release.yml`。工作流在 Windows 构建并检查安装包后发布；手动运行默认仅创建草稿，选择 publish 才公开。发布前仍需人工完成真实桌面上的功能、恢复和隐私检查。
 - 更新程序读取本仓库公开 Releases 列表，忽略草稿、旧版、错误安装包名、其他仓库地址和缺失 SHA-256 的附件。测试版可升级到更新测试版或正式版；正式版不会自动切换到预览通道。普通源码推送不通知用户升级。
