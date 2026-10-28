@@ -89,11 +89,12 @@ internal static class Program
             {
                 if (args.Contains("--settings")) controller.OpenSettings();
                 await controller.Start();
+                if (args.Contains("--applications")) controller.ToggleApplications();
                 if (args.Contains("--smoke-test")) await controller.RunSmokeTest();
                 if (args.Contains("--drag-test")) await controller.RunDragTest(args.Contains("--hold-drag"));
                 if (args.Contains("--click-hover-test")) await controller.RunClickHoverTest();
                 if (args.Contains("--browser-window-test")) await controller.RunBrowserWindowTest();
-                if (args.Contains("--feature-test")) await controller.RunFeatureTest();
+                if (args.Contains("--feature-test")) await controller.RunFeatureTest(args.Contains("--inspect-features"));
             };
             return application.Run();
         }
@@ -192,7 +193,7 @@ internal sealed class Controller : IDisposable
     }
     private void DockChanged() { Save(); settingsWindow?.RefreshItems(); }
     private void Apply() { Save(); desktop.Apply(settings.HideDesktopIcons); dock.ApplySettings(); ApplyTaskbar(); if (showWidgets) widgets.Apply(); }
-    private void ToggleApplications()
+    public void ToggleApplications()
     {
         desktopPanel ??= new(settings, Save, dock.RefreshOcclusion, item => dock.OpenFromPanel(item), item => _ = PinFromPanel(item));
         if (desktopPanel.Open) desktopPanel.Dismiss(); else _ = desktopPanel.Present();
@@ -285,10 +286,10 @@ internal sealed class Controller : IDisposable
         Quit();
     }
 
-    public async Task RunFeatureTest()
+    public async Task RunFeatureTest(bool inspect = false)
     {
         dock.UseOcclusionWindowsForChecks(() => []);
-        var checks = await FeatureChecks.Run(Path.Combine(data, "feature-checks"));
+        var checks = await FeatureChecks.Run(Path.Combine(data, "feature-checks"), inspect);
         File.WriteAllText(Path.Combine(data, "feature-report.json"), JsonSerializer.Serialize(checks, new JsonSerializerOptions { WriteIndented = true }));
         Quit();
     }
@@ -525,7 +526,7 @@ internal sealed class Controller : IDisposable
             await Task.Delay(5000); process.Refresh();
             var report = new
             {
-                Version = "0.1.0-preview.17", dock.HardwareRendering, dock.HostBackdrop, dock.IconCount,
+                Version = "0.1.0-preview.18", dock.HardwareRendering, dock.HostBackdrop, dock.IconCount,
                 BottomEdgeReveals = true, EdgeLeaveHides = recallTimedOut, HoverKeepsVisible = interactionResetTimeout,
                 ContextMenuStaysOpen = menuStaysOpen,
                 VisibilityMotionChecks = visibilityMotionChecks,

@@ -4,6 +4,8 @@ using System.Net.Http;
 using System.Text;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
+using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using DesktopDock.Core;
@@ -39,7 +41,7 @@ internal static class FeatureChecks
         var encoder = new PngBitmapEncoder(); encoder.Frames.Add(BitmapFrame.Create(bitmap));
         using var stream = File.Create(path); encoder.Save(stream);
     }
-    public static async Task<Dictionary<string, bool>> Run(string data)
+    public static async Task<Dictionary<string, bool>> Run(string data, bool inspect = false)
     {
         Directory.CreateDirectory(data);
         var checks = new Dictionary<string, bool>();
@@ -48,6 +50,22 @@ internal static class FeatureChecks
         {
             for (int i = 0; i < 80 && !condition(); i++) await Task.Delay(40);
             Require(condition(), name);
+        }
+        async Task Inspect(params Window[] windows)
+        {
+            if (!inspect) return;
+            // Inspection tools omit tool windows from their inventory. Expose
+            // only the synthetic fixture windows for this optional visual run.
+            foreach (var window in windows)
+            {
+                window.ShowInTaskbar = true;
+                nint hwnd = new System.Windows.Interop.WindowInteropHelper(window).Handle;
+                long style = Native.GetWindowLongPtr(hwnd, -20).ToInt64();
+                Native.SetWindowLongPtr(hwnd, -20, new((style | 0x40000L) & ~0x80L));
+            }
+            string gate = Path.Combine(data, "visual-inspection.pause");
+            File.WriteAllText(gate, "Remove this local test marker to continue the fixture checks.");
+            for (int i = 0; i < 600 && File.Exists(gate); i++) await Task.Delay(500);
         }
         string fixture = Path.Combine(data, "desktop-fixture"); Directory.CreateDirectory(fixture);
         for (int i = 0; i < 53; i++) File.WriteAllText(Path.Combine(fixture, $"Example {i:00}.txt"), "Desktop Dock fixture");
@@ -74,9 +92,27 @@ internal static class FeatureChecks
             panel.FilterForChecks("", group.Id); Require(panel.FilteredCountForChecks == 1, "GroupFiltersDesktopEntries");
             panel.FilterForChecks("", "ungrouped"); Require(panel.FilteredCountForChecks == 53, "UngroupedOmitsGroupedEntry");
             panel.FilterForChecks("");
+            panel.FilterForChecks("", "preset:documents"); Require(panel.FilteredCountForChecks == 53, "PresetDocumentsFilterUsesCachedCategories");
+            panel.FilterForChecks("", "preset:folders"); Require(panel.FilteredCountForChecks == 1, "PresetFoldersFilterDoesNotMoveFiles");
+            panel.FilterForChecks("");
             Capture(panel, Path.Combine(data, "desktop-panel.png"));
             var nextPage = Children<Button>(panel).Single(x => x.Content as string == "›"); nextPage.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             Require(panel.PageForChecks == 1, "PanelPaginatesBeyondFirstGrid");
+            var appGrid = Children<UniformGrid>(panel).Single();
+            appGrid.RaiseEvent(new MouseWheelEventArgs(Mouse.PrimaryDevice, Environment.TickCount, 120) { RoutedEvent = Mouse.PreviewMouseWheelEvent });
+            Require(panel.PageForChecks == 0, "WheelEventNavigatesPreviousPageThroughGrid");
+            await Task.Delay(200);
+            appGrid.RaiseEvent(new MouseWheelEventArgs(Mouse.PrimaryDevice, Environment.TickCount, -120) { RoutedEvent = Mouse.PreviewMouseWheelEvent });
+            Require(panel.PageForChecks == 1, "WheelEventNavigatesNextPageThroughGrid");
+            panel.FilterForChecks("Example 02");
+            tile = Children<Button>(panel).Single(x => x.ToolTip as string == "Example 02.txt");
+            tile.RaiseEvent(new MouseEventArgs(Mouse.PrimaryDevice, 0) { RoutedEvent = Mouse.MouseEnterEvent });
+            await Task.Delay(200);
+            var zoom = Children<Grid>(tile).Select(x => x.RenderTransform).OfType<ScaleTransform>().Single();
+            Require(zoom.ScaleX > 1.14 && zoom.ScaleY > 1.14, "DesktopTileHoverScalesIconWithoutChangingHitArea");
+            tile.RaiseEvent(new MouseEventArgs(Mouse.PrimaryDevice, 0) { RoutedEvent = Mouse.MouseLeaveEvent });
+            await Task.Delay(180);
+            Require(zoom.ScaleX == 1 && zoom.ScaleY == 1, "DesktopTileHoverSettlesBackToOriginalSize");
             panel.FilterForChecks("Example 02");
             tile = Children<Button>(panel).Single(x => x.ToolTip as string == "Example 02.txt"); tile.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             await WaitFor(() => !panel.IsVisible, "PanelLaunchDismissesAfterFade");
@@ -89,6 +125,8 @@ internal static class FeatureChecks
             Require(panel.Opacity > 0, "PanelReversePreservesCurrentOpacity");
             await reversed; await Task.Delay(200);
             Require(panel.Open && panel.Opacity == 1, "PanelReversesDismissWithoutLateHide");
+            Require(!panel.AllowsTransparency && Native.DwmGetIntAttribute(new System.Windows.Interop.WindowInteropHelper(panel).Handle, 38, out int panelBackdrop, sizeof(int)) == 0 && panelBackdrop == 3, "PanelRequestsNativeDesktopAcrylic");
+            await Inspect(panel);
             panel.Dismiss(); await WaitFor(() => !panel.IsVisible, "PanelToggleCanClose");
         }
         finally { panel.DisposeWindow(); }
@@ -99,13 +137,19 @@ internal static class FeatureChecks
             widgets.Apply();
             await WaitFor(() => !widgets.WeatherFetchingForChecks, "WeatherFixtureCompletesAsynchronously");
             var windows = widgets.WindowsForChecks.ToArray();
-            Require(windows.Length == 3 && windows.All(x => x.IsVisible && !x.Topmost && !x.ShowInTaskbar), "ThreeDesktopWidgetsAreVisibleBelowApplications");
+            Require(windows.Length == 2 && windows.All(x => x.Kind != "calendar" && x.IsVisible && !x.Topmost && !x.ShowInTaskbar), "OnlyClockAndWeatherAreVisibleBelowApplications");
+            Require(windows.All(x => !x.AllowsTransparency && Native.DwmGetIntAttribute(x.Handle, 38, out int backdrop, sizeof(int)) == 0 && backdrop == 3), "WidgetsRequestNativeDesktopAcrylic");
+            var clock = windows.Single(x => x.Kind == "clock");
+            var timeText = Children<TextBlock>(clock).Single(x => x.Text.Length == 8 && x.Text.Count(c => c == ':') == 2);
+            string beforeTick = timeText.Text; await Task.Delay(1250);
+            Require(timeText.Text != beforeTick && timeText.Text.Length == 8, "ClockDisplaysSecondsAndUpdatesWithoutManualRefresh");
             Require(windows.All(x => (Native.GetWindowLongPtr(x.Handle, -20).ToInt64() & (0x80 | 0x08000000 | 0x40000)) == (0x80 | 0x08000000)), "WidgetsDoNotActivateOrEnterAltTab");
             var weather = windows.Single(x => x.Kind == "weather");
             Require(Children<TextBlock>(weather).Any(x => x.Text == "18°") && Children<TextBlock>(weather).Any(x => x.Text.Contains("Example Region")), "WeatherShowsApiValueAndResolvedRegion");
             Require(Uri.UnescapeDataString(fixtureHttp.Requests[0].Query).Contains("洛阳市"), "ChineseCityResolutionAvoidsNamesakeTown");
             Require(fixtureHttp.Requests[1].Query.Contains("latitude=34.67") && fixtureHttp.Requests[1].Query.Contains("longitude=112.43"), "WeatherFetchUsesSelectedCityCoordinates");
             foreach (var window in windows) Capture(window, Path.Combine(data, window.Kind + "-widget.png"));
+            await Inspect(windows);
             var ownSettings = new Window { Title = "Desktop Dock · Fixture settings", Width = 400, Height = 320, ShowInTaskbar = false, WindowStyle = WindowStyle.ToolWindow };
             try
             {
@@ -115,15 +159,15 @@ internal static class FeatureChecks
                 Require(windows.All(x => zOrder.IndexOf(x.Handle) > zOrder.IndexOf(settingsHandle)), "WidgetsRemainBelowOwnSettingsDialog");
             }
             finally { ownSettings.Close(); }
-            var calendar = windows.Single(x => x.Kind == "calendar");
-            calendar.Left = 50000; calendar.Top = 50000; widgets.RememberPositionForChecks(calendar);
-            var work = System.Windows.Forms.Screen.PrimaryScreen!.WorkingArea; Native.GetWindowRect(calendar.Handle, out var bounds);
+            clock.Left = 50000; clock.Top = 50000; widgets.RememberPositionForChecks(clock);
+            var work = System.Windows.Forms.Screen.PrimaryScreen!.WorkingArea; Native.GetWindowRect(clock.Handle, out var bounds);
             Require(bounds.Left >= work.Left && bounds.Top >= work.Top && bounds.Right <= work.Right + 2 && bounds.Bottom <= work.Bottom + 2, "DraggedWidgetIsClampedInsideWorkArea");
-            Require(settings.Widgets.Positions.ContainsKey("calendar"), "WidgetPlacementPersistsAfterMove");
+            Require(settings.Widgets.Positions.ContainsKey("clock"), "WidgetPlacementPersistsAfterMove");
             fixtureHttp.Offline = true; await widgets.RefreshWeather();
             Require(Children<TextBlock>(weather).Any(x => x.Text.Contains("上次更新")) && Children<TextBlock>(weather).Any(x => x.Text == "18°"), "OfflineWeatherRetainsLastRealValue");
             int requestsBeforeRemove = fixtureHttp.Requests.Count;
-            widgets.Remove("clock"); Require(widgets.WindowsForChecks.Count == 2 && !settings.Widgets.Clock, "WidgetCanBeRemovedIndependently");
+            widgets.Remove("clock"); Require(widgets.WindowsForChecks.Count == 1 && !settings.Widgets.Clock, "WidgetCanBeRemovedIndependently");
+            Require(!widgets.ClockTickingForChecks, "RemovingClockStopsSecondTimer");
             Require(fixtureHttp.Requests.Count == requestsBeforeRemove, "EditingOtherWidgetReusesFreshWeatherCache");
             settings.Widgets.City = "Unknown City"; widgets.Apply(); await WaitFor(() => !widgets.WeatherFetchingForChecks, "FailedWeatherFetchSettles");
             Require(Children<TextBlock>(widgets.WindowsForChecks.Single(x => x.Kind == "weather")).Any(x => x.Text == "天气暂不可用"), "MissingWeatherShowsUnavailableInsteadOfSampleData");

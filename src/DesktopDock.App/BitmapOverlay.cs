@@ -9,11 +9,12 @@ namespace DesktopDock.App;
 // One cached bitmap, composed by DWM. No focus, Alt+Tab entry, or mouse surface.
 internal sealed class BitmapOverlay : Forms.NativeWindow, IDisposable
 {
-    private nint dc, bitmap, previous;
+    private nint dc, bitmap, previous, bits;
     private readonly int width, height;
     private byte opacity = 255;
     private Native.Point position;
     private bool shown;
+    private bool pixelsChanged;
     public BitmapOverlay(byte[] pixels, int width, int height)
     {
         this.width = width; this.height = height;
@@ -21,7 +22,7 @@ internal sealed class BitmapOverlay : Forms.NativeWindow, IDisposable
             ExStyle = 0x80000 | 0x20 | 0x80 | 0x08000000 | 8, Width = width, Height = height });
         dc = CreateCompatibleDC(0);
         var info = new BitmapInfo { Size = 40, Width = width, Height = -height, Planes = 1, BitCount = 32 };
-        bitmap = CreateDIBSection(dc, ref info, 0, out nint bits, 0, 0);
+        bitmap = CreateDIBSection(dc, ref info, 0, out bits, 0, 0);
         if (dc == 0 || bitmap == 0) { Dispose(); throw new System.ComponentModel.Win32Exception(); }
         Marshal.Copy(pixels, 0, bits, checked(width * height * 4));
         previous = SelectObject(dc, bitmap);
@@ -29,7 +30,7 @@ internal sealed class BitmapOverlay : Forms.NativeWindow, IDisposable
     public void Place(int x, int y, byte alpha = 255)
     {
         position = new() { X = x, Y = y };
-        if (!shown || alpha != opacity)
+        if (!shown || alpha != opacity || pixelsChanged)
         {
             opacity = alpha;
             var size = new Native.Point { X = width, Y = height };
@@ -37,13 +38,19 @@ internal sealed class BitmapOverlay : Forms.NativeWindow, IDisposable
             var blend = new Blend { Alpha = alpha, Format = 1 };
             if (!UpdateLayeredWindow(Handle, 0, ref position, ref size, dc, ref origin, 0, ref blend, 2))
                 throw new System.ComponentModel.Win32Exception();
+            pixelsChanged = false;
         }
         else Native.SetWindowPos(Handle, 0, x, y, 0, 0, 0x0015 | 0x0200);
         if (!shown) { shown = true; Native.ShowWindow(Handle, 8); }
     }
-    public static (byte[] Pixels, int Side, int Margin) Icon(byte[] pixels, int resolution, int size)
+    public void SetPixels(byte[] pixels)
     {
-        int margin = Math.Max(8, size / 6), side = size + margin * 2;
+        if (pixels.Length != width * height * 4) throw new ArgumentException("Bitmap dimensions do not match.", nameof(pixels));
+        Marshal.Copy(pixels, 0, bits, pixels.Length); pixelsChanged = true;
+    }
+    public static (byte[] Pixels, int Side, int Margin) Icon(byte[] pixels, int resolution, int size, bool removing = false)
+    {
+        int margin = Math.Max(12, size / 4), side = size + margin * 2;
         using var source = new Bitmap(resolution, resolution, PixelFormat.Format32bppPArgb);
         var sourceData = source.LockBits(new Rectangle(0, 0, resolution, resolution), ImageLockMode.WriteOnly, PixelFormat.Format32bppPArgb);
         try { Marshal.Copy(pixels, 0, sourceData.Scan0, pixels.Length); }
@@ -58,6 +65,20 @@ internal sealed class BitmapOverlay : Forms.NativeWindow, IDisposable
             drawing.FillPath(shadow, path);
             drawing.InterpolationMode = InterpolationMode.HighQualityBicubic;
             drawing.DrawImage(source, margin, margin - 3, size, size);
+            if (removing)
+            {
+                drawing.SmoothingMode = SmoothingMode.AntiAlias;
+                float r = Math.Max(9, size * .23f), cx = margin + size - 3, cy = margin + size - 3;
+                using var red = new SolidBrush(Color.FromArgb(255, 240, 62, 76));
+                using var rim = new Pen(Color.FromArgb(225, 255, 255, 255), Math.Max(1, size / 48f));
+                drawing.FillEllipse(red, cx - r, cy - r, 2 * r, 2 * r); drawing.DrawEllipse(rim, cx - r, cy - r, 2 * r, 2 * r);
+                using var pen = new Pen(Color.White, Math.Max(1.3f, size / 32f)) { StartCap = LineCap.Round, EndCap = LineCap.Round, LineJoin = LineJoin.Round };
+                drawing.DrawLine(pen, cx - r * .48f, cy - r * .35f, cx + r * .48f, cy - r * .35f);
+                drawing.DrawLines(pen, new PointF[] { new(cx - r * .18f, cy - r * .38f), new(cx - r * .18f, cy - r * .56f), new(cx + r * .18f, cy - r * .56f), new(cx + r * .18f, cy - r * .38f) });
+                drawing.DrawLines(pen, new PointF[] { new(cx - r * .36f, cy - r * .12f), new(cx - r * .29f, cy + r * .48f), new(cx + r * .29f, cy + r * .48f), new(cx + r * .36f, cy - r * .12f) });
+                drawing.DrawLine(pen, cx - r * .12f, cy, cx - r * .1f, cy + r * .26f);
+                drawing.DrawLine(pen, cx + r * .12f, cy, cx + r * .1f, cy + r * .26f);
+            }
         }
         var data = result.LockBits(new Rectangle(0, 0, side, side), ImageLockMode.ReadOnly, PixelFormat.Format32bppPArgb);
         byte[] output = new byte[side * side * 4];

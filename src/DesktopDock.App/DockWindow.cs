@@ -80,6 +80,8 @@ internal sealed class DockWindow : IDisposable
     private double gripX = .5, gripY = .5, dragX, dragY, ghostX, ghostY, returnX, returnY;
     private int ghostMargin;
     private BitmapOverlay? ghost;
+    private byte[]? ghostNormalPixels, ghostRemovePixels;
+    private bool ghostRemoving;
     private readonly TimedTransition returnMotion = new();
     private bool menuOpen;
     private nint menuForChecks;
@@ -632,11 +634,13 @@ internal sealed class DockWindow : IDisposable
             // Dock. Activating or re-capturing here can synchronously cancel the
             // press; never use mutable pressedIndex after such a notification.
             var image = BitmapOverlay.Icon(pixels, IconService.Resolution, (int)Math.Round(RestGeometry.IconSize * scale));
+            var removal = BitmapOverlay.Icon(pixels, IconService.Resolution, (int)Math.Round(RestGeometry.IconSize * scale), removing: true);
             prepared = new(image.Pixels, image.Side, image.Side);
             labelTimer.Stop(); label.IsOpen = false;
             dragStartInterruptionForChecks?.Invoke();
             if (!Current()) return;
             ghost = prepared; prepared = null; ghostMargin = image.Margin;
+            ghostNormalPixels = image.Pixels; ghostRemovePixels = removal.Pixels; ghostRemoving = false;
             dragging = true; dragFrom = dragTo = ghostIndex = index;
             hover.Reset(0); renderer.ResetPressFeedback(); suppressHover = true;
             StartRendering();
@@ -663,9 +667,15 @@ internal sealed class DockWindow : IDisposable
         }
         else return false;
         bool moved = Math.Abs(x - ghostX) > .1 || Math.Abs(y - ghostY) > .1;
+        bool removing = dragging && DockReorder.RemoveOnRelease(rest, width / scale, height / scale, dragX, dragY);
+        bool badgeChanged = removing != ghostRemoving;
+        if (badgeChanged)
+        {
+            ghostRemoving = removing;
+            if ((removing ? ghostRemovePixels : ghostNormalPixels) is { } pixels) ghost.SetPixels(pixels);
+        }
         ghostX = x; ghostY = y;
-        if (moved || returning) ghost.Place((int)Math.Round(x), (int)Math.Round(y),
-            dragging && DockReorder.RemoveOnRelease(rest, width / scale, height / scale, dragX, dragY) ? (byte)140 : (byte)255);
+        if (moved || returning || badgeChanged) ghost.Place((int)Math.Round(x), (int)Math.Round(y), removing ? (byte)235 : (byte)255);
         return returning || moved;
     }
     private void EndIconDrag(bool commit, bool remove = false)
@@ -704,6 +714,7 @@ internal sealed class DockWindow : IDisposable
     private void FinishGhost(bool render = true)
     {
         ghost?.Dispose(); ghost = null; ghostIndex = -1; returning = false;
+        ghostNormalPixels = ghostRemovePixels = null; ghostRemoving = false;
         if (!disposed && render) RenderLayout();
     }
     private void CancelInteraction()
@@ -1156,6 +1167,12 @@ internal sealed class DockWindow : IDisposable
             int beforeRemoval = settings.Items.Count;
             Mouse(0x0201, removeX, rest.Baseline(height / scale) - rest.IconSize / 2);
             Mouse(0x0200, removeX, removeY); await Task.Delay(60);
+            Require(ghostRemoving && ghostRemovePixels is not null && ghostNormalPixels is not null
+                && !ghostRemovePixels.SequenceEqual(ghostNormalPixels), "FarDragShowsCachedRedTrashBadge");
+            Mouse(0x0200, removeX, rest.Baseline(height / scale) - rest.IconSize / 2); await Task.Delay(40);
+            Require(!ghostRemoving && ghost is not null, "ReturningInsideDockClearsRemovalBadge");
+            Mouse(0x0200, removeX, removeY); await Task.Delay(40);
+            Require(ghostRemoving, "DraggingOutAgainRestoresRemovalBadge");
             Mouse(0x0202, removeX, removeY);
             Require(settings.Items.Count == beforeRemoval - 1 && !settings.Items.Any(item => item.Target == shortcut)
                 && renderer.IconCount == settings.Items.Count + 2 && ghost is null, "FarReleaseRemovesOnlyDockEntry");

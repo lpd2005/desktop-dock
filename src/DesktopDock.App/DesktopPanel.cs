@@ -5,6 +5,7 @@ using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
 using DesktopDock.Core;
 
 namespace DesktopDock.App;
@@ -18,8 +19,13 @@ internal sealed class DesktopPanel : Window
     private readonly StackPanel groups = new();
     private readonly UniformGrid grid = new() { Columns = 6, Rows = 4 };
     private readonly TextBox search = new() { FontSize = 14, BorderThickness = new(0), Background = Brushes.Transparent, Padding = new(14, 10, 14, 10) };
-    private readonly TextBlock caption = FeatureUi.Text("正在整理桌面…", 12, FeatureUi.Muted);
-    private readonly TextBlock pageLabel = FeatureUi.Text("", 12, FeatureUi.Muted);
+    private readonly TextBlock caption = FeatureUi.Text("正在整理桌面…", 11, LiquidGlass.Muted);
+    private readonly TextBlock pageLabel = FeatureUi.Text("", 12, LiquidGlass.Ink);
+    private readonly TextBlock sectionTitle = FeatureUi.Text("全部桌面项目", 14, LiquidGlass.Ink);
+    private readonly Dictionary<string, string> categories = new(StringComparer.OrdinalIgnoreCase);
+    private readonly PageWheel wheel = new();
+    private readonly Stopwatch interactionClock = Stopwatch.StartNew();
+    private readonly Button previousPage, nextPage;
     private readonly Dictionary<string, System.Windows.Media.Imaging.BitmapSource> icons = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, (Image Image, TextBlock Placeholder)> tiles = new(StringComparer.OrdinalIgnoreCase);
     private DockItem[] items = [], filtered = [];
@@ -36,33 +42,37 @@ internal sealed class DesktopPanel : Window
         this.settings = settings; this.save = save; this.changed = changed; this.launch = launch; this.pin = pin;
         this.directories = directories;
         Title = "Desktop Dock · 桌面应用"; Icon = AppBrand.Image();
-        Width = 1040; Height = 690; AllowsTransparency = true; WindowStyle = WindowStyle.None; ResizeMode = ResizeMode.NoResize;
-        ShowInTaskbar = false; Topmost = true; Background = Brushes.Transparent; Foreground = FeatureUi.Ink;
+        Width = 1040; Height = 690; WindowStyle = WindowStyle.None; ResizeMode = ResizeMode.NoResize;
+        ShowInTaskbar = false; Topmost = true; Background = Brushes.Transparent; Foreground = LiquidGlass.Ink;
         FontFamily = new("Segoe UI Variable Display, Microsoft YaHei UI");
         SourceInitialized += (_, _) => FeatureUi.ToolWindow(this);
+        LiquidGlass.Install(this);
         var layout = new DockPanel();
         var header = new Grid { Margin = new(0, 0, 0, 18) }; header.ColumnDefinitions.Add(new()); header.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
         var identity = new StackPanel { Orientation = Orientation.Horizontal };
         identity.Children.Add(new Image { Source = AppBrand.Image(), Width = 36, Height = 36, Margin = new(0, 0, 12, 0) });
-        var titles = new StackPanel(); titles.Children.Add(FeatureUi.Text("桌面应用", 24)); titles.Children.Add(FeatureUi.Text("清晰收纳，轻点即达。", 11, FeatureUi.Muted)); identity.Children.Add(titles);
+        var titles = new StackPanel(); titles.Children.Add(FeatureUi.Text("桌面应用", 24, LiquidGlass.Ink)); titles.Children.Add(FeatureUi.Text("DESKTOP LIBRARY", 9, LiquidGlass.Muted)); identity.Children.Add(titles);
         header.Children.Add(identity);
-        var close = FeatureUi.Button("✕", Dismiss); Grid.SetColumn(close, 1); header.Children.Add(close);
+        var close = LiquidGlass.Button("✕", Dismiss); close.ToolTip = "关闭 · Esc"; Grid.SetColumn(close, 1); header.Children.Add(close);
         DockPanel.SetDock(header, Dock.Top); layout.Children.Add(header);
         var searchArea = new Grid(); searchArea.Children.Add(search);
-        var placeholder = FeatureUi.Text("搜索桌面上的应用、文件和文件夹", 13, FeatureUi.Muted); placeholder.Margin = new(14, 0, 0, 0); placeholder.IsHitTestVisible = false; searchArea.Children.Add(placeholder);
+        search.Foreground = LiquidGlass.Ink; search.CaretBrush = Brushes.White;
+        var placeholder = FeatureUi.Text("搜索应用、文件和文件夹", 13, LiquidGlass.Muted); placeholder.Margin = new(14, 0, 0, 0); placeholder.IsHitTestVisible = false; searchArea.Children.Add(placeholder);
         search.TextChanged += (_, _) => { placeholder.Visibility = search.Text.Length == 0 ? Visibility.Visible : Visibility.Collapsed; page = 0; RefreshGrid(); };
-        var searchFrame = new Border { Background = new SolidColorBrush(Color.FromArgb(175, 231, 237, 246)), CornerRadius = new(13), Child = searchArea, Margin = new(0, 0, 0, 19) };
+        var searchFrame = new Border { Background = LiquidGlass.Tint(28), BorderBrush = LiquidGlass.Tint(65), BorderThickness = new(1), CornerRadius = new(15), Child = searchArea, Margin = new(0, 0, 0, 20) };
         DockPanel.SetDock(searchFrame, Dock.Top); layout.Children.Add(searchFrame);
         var footer = new Grid { Margin = new(0, 10, 0, 0) }; footer.ColumnDefinitions.Add(new()); footer.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
         footer.Children.Add(caption);
         var pages = new StackPanel { Orientation = Orientation.Horizontal };
-        pages.Children.Add(FeatureUi.Button("‹", () => ChangePage(-1))); pages.Children.Add(pageLabel); pages.Children.Add(FeatureUi.Button("›", () => ChangePage(1)));
-        pages.Children.Add(FeatureUi.Button("刷新", () => _ = Reload())); Grid.SetColumn(pages, 1); footer.Children.Add(pages);
+        previousPage = LiquidGlass.Button("‹", () => ChangePage(-1)); nextPage = LiquidGlass.Button("›", () => ChangePage(1));
+        previousPage.ToolTip = "上一页 · 向上滚动"; nextPage.ToolTip = "下一页 · 向下滚动"; pageLabel.MinWidth = 57; pageLabel.TextAlignment = TextAlignment.Center;
+        pages.Children.Add(previousPage); pages.Children.Add(pageLabel); pages.Children.Add(nextPage);
+        pages.Children.Add(LiquidGlass.Button("↻", () => _ = Reload())); Grid.SetColumn(pages, 1); footer.Children.Add(pages);
         DockPanel.SetDock(footer, Dock.Bottom); layout.Children.Add(footer);
-        var body = new Grid(); body.ColumnDefinitions.Add(new() { Width = new(166) }); body.ColumnDefinitions.Add(new());
+        var body = new Grid(); body.ColumnDefinitions.Add(new() { Width = new(186) }); body.ColumnDefinitions.Add(new());
         var sidebar = new DockPanel { Margin = new(0, 0, 16, 0) };
         var addGroup = new StackPanel { Margin = new(0, 12, 0, 0) };
-        var groupName = new TextBox { MaxLength = 24, Padding = new(8), FontSize = 12, ToolTip = "填写分组名称", BorderThickness = new(0), Background = new SolidColorBrush(Color.FromRgb(232, 238, 247)) };
+        var groupName = new TextBox { MaxLength = 24, Padding = new(9), FontSize = 12, ToolTip = "填写分组名称", BorderThickness = new(0), Background = Brushes.Transparent, Foreground = LiquidGlass.Ink, CaretBrush = Brushes.White };
         void AddGroup()
         {
             if (settings.DesktopGroups.Count >= 40) return;
@@ -70,12 +80,18 @@ internal sealed class DesktopPanel : Window
             var group = new DesktopGroup { Name = name }; settings.DesktopGroups.Add(group); groupName.Clear(); selectedGroup = group.Id; page = 0; save(); RefreshGroups(); RefreshGrid();
         }
         groupName.KeyDown += (_, e) => { if (e.Key == Key.Enter) { AddGroup(); e.Handled = true; } };
-        addGroup.Children.Add(FeatureUi.Text("分组名称（可选）", 10, FeatureUi.Muted));
-        addGroup.Children.Add(groupName); addGroup.Children.Add(FeatureUi.Button("＋ 新建分组", AddGroup));
+        addGroup.Children.Add(FeatureUi.Text("分组名称（可选）", 10, LiquidGlass.Muted));
+        addGroup.Children.Add(new Border { CornerRadius = new(10), Background = LiquidGlass.Tint(25), Child = groupName }); addGroup.Children.Add(LiquidGlass.Button("＋ 新建分组", AddGroup));
         DockPanel.SetDock(addGroup, Dock.Bottom); sidebar.Children.Add(addGroup);
-        sidebar.Children.Add(new ScrollViewer { Content = groups, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled });
-        body.Children.Add(sidebar); Grid.SetColumn(grid, 1); body.Children.Add(grid); layout.Children.Add(body);
-        var card = FeatureUi.Card(layout, 28); card.Padding = new(27); card.Margin = new(17);
+        var groupScroll = new ScrollViewer { Content = groups, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
+        groupScroll.Resources.Add(typeof(ScrollBar), LiquidGlass.ScrollBarStyle()); sidebar.Children.Add(groupScroll);
+        body.Children.Add(sidebar);
+        var collection = new DockPanel { Margin = new(10, 0, 0, 0) };
+        sectionTitle.Margin = new(8, 3, 0, 12); DockPanel.SetDock(sectionTitle, Dock.Top); collection.Children.Add(sectionTitle); collection.Children.Add(grid);
+        grid.RenderTransform = new TranslateTransform();
+        grid.PreviewMouseWheel += (_, e) => { int delta = wheel.Update(e.Delta, interactionClock.Elapsed.TotalSeconds); if (delta != 0) ChangePage(delta); e.Handled = true; };
+        Grid.SetColumn(collection, 1); body.Children.Add(collection); layout.Children.Add(body);
+        var card = LiquidGlass.Card(layout, 26); card.Padding = new(28); card.Margin = new(0);
         Content = card;
         PreviewKeyDown += (_, e) =>
         {
@@ -93,7 +109,7 @@ internal sealed class DesktopPanel : Window
 
     public async Task Present()
     {
-        transition++; hiding = false; Opacity = 0;
+        transition++; hiding = false; if (!IsVisible) Opacity = 0;
         var work = System.Windows.Forms.Screen.PrimaryScreen!.WorkingArea;
         double dpi = Native.GetDpiForWindow(new System.Windows.Interop.WindowInteropHelper(this).EnsureHandle()) / 96d;
         Width = Math.Min(1040, work.Width / dpi - 36); Height = Math.Min(690, work.Height / dpi - 120);
@@ -113,9 +129,14 @@ internal sealed class DesktopPanel : Window
     public async Task Reload()
     {
         int version = ++generation;
-        var next = await Task.Run(() => directories is null ? DesktopCatalog.Read() : DesktopLibrary.Read(directories));
+        var next = await Task.Run(() =>
+        {
+            var entries = directories is null ? DesktopCatalog.Read() : DesktopLibrary.Read(directories);
+            return (Entries: entries, Categories: entries.ToDictionary(x => x.Target, x => DesktopLibrary.Category(x, Directory.Exists(x.Target)), StringComparer.OrdinalIgnoreCase));
+        });
         if (version != generation || disposing) return;
-        items = next; RefreshGroups(); RefreshGrid();
+        items = next.Entries; categories.Clear(); foreach (var pair in next.Categories) categories[pair.Key] = pair.Value;
+        RefreshGroups(); RefreshGrid();
         var missing = items.Where(x => !icons.ContainsKey(x.Target)).ToArray();
         foreach (var item in missing)
         {
@@ -131,10 +152,13 @@ internal sealed class DesktopPanel : Window
         groups.Children.Clear();
         void Add(string id, string title, DesktopGroup? group = null)
         {
-            var button = FeatureUi.Button(title, () => { selectedGroup = id; page = 0; RefreshGroups(); RefreshGrid(); }, id == selectedGroup);
-            button.HorizontalContentAlignment = HorizontalAlignment.Left; button.AllowDrop = true;
-            button.Drop += (_, e) => { if (id != "all" && e.Data.GetData(typeof(DockItem)) is DockItem item) { Assign(item, id == "ungrouped" ? null : id); e.Handled = true; } };
-            button.DragOver += (_, e) => { e.Effects = e.Data.GetDataPresent(typeof(DockItem)) && id != "all" ? DragDropEffects.Move : DragDropEffects.None; e.Handled = true; };
+            var button = LiquidGlass.Button("", () => { selectedGroup = id; page = 0; RefreshGroups(); RefreshGrid(); }, id == selectedGroup);
+            var row = new DockPanel { Width = 132 }; var count = FeatureUi.Text(SelectItems(id, "").Length.ToString(), 10, LiquidGlass.Muted);
+            DockPanel.SetDock(count, Dock.Right); row.Children.Add(count); row.Children.Add(FeatureUi.Text(title, 12, LiquidGlass.Ink)); button.Content = row;
+            button.Padding = new(10, 10, 10, 10); button.Margin = new(0, 3, 0, 3);
+            button.HorizontalContentAlignment = HorizontalAlignment.Left; button.AllowDrop = id == "ungrouped" || group is not null;
+            button.Drop += (_, e) => { if (button.AllowDrop && e.Data.GetData(typeof(DockItem)) is DockItem item) { Assign(item, id == "ungrouped" ? null : id); e.Handled = true; } };
+            button.DragOver += (_, e) => { e.Effects = e.Data.GetDataPresent(typeof(DockItem)) && button.AllowDrop ? DragDropEffects.Move : DragDropEffects.None; e.Handled = true; };
             if (group is not null)
             {
                 var menu = new ContextMenu();
@@ -146,47 +170,74 @@ internal sealed class DesktopPanel : Window
             }
             groups.Children.Add(button);
         }
-        Add("all", "全部桌面项目"); Add("ungrouped", "未分组");
-        groups.Children.Add(FeatureUi.Text("我的分组", 10, FeatureUi.Muted));
+        Add("all", "全部项目");
+        var smartLabel = FeatureUi.Text("自动归类", 10, LiquidGlass.Muted); smartLabel.Margin = new(10, 17, 0, 6); groups.Children.Add(smartLabel);
+        foreach (var preset in DesktopLibrary.Presets) Add("preset:" + preset.Id, preset.Glyph + "  " + preset.Name);
+        var groupLabel = FeatureUi.Text("我的分组", 10, LiquidGlass.Muted); groupLabel.Margin = new(10, 17, 0, 6); groups.Children.Add(groupLabel);
+        Add("ungrouped", "未分组");
         foreach (var group in settings.DesktopGroups) Add(group.Id, group.Name, group);
     }
     private void Assign(DockItem item, string? id) { DesktopLibrary.Assign(settings.DesktopGroups, item.Target, id); save(); RefreshGroups(); RefreshGrid(); }
-    private void ChangePage(int delta) { page = Math.Clamp(page + delta, 0, Math.Max(0, (filtered.Length - 1) / PageSize)); RefreshGrid(); }
+    private DockItem[] SelectItems(string id, string query) => id.StartsWith("preset:", StringComparison.Ordinal)
+        ? DesktopLibrary.Filter(items.Where(x => categories.GetValueOrDefault(x.Target) == id[7..]), settings.DesktopGroups, "all", query)
+        : DesktopLibrary.Filter(items, settings.DesktopGroups, id, query);
+    private void ChangePage(int delta)
+    {
+        int next = Math.Clamp(page + delta, 0, Math.Max(0, (filtered.Length - 1) / PageSize));
+        if (next == page) return;
+        page = next; RefreshGrid();
+        if (!settings.ReducedMotion)
+        {
+            grid.BeginAnimation(OpacityProperty, new DoubleAnimation(.45, 1, TimeSpan.FromMilliseconds(150)) { FillBehavior = FillBehavior.Stop });
+            ((TranslateTransform)grid.RenderTransform).BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(delta > 0 ? 12 : -12, 0, TimeSpan.FromMilliseconds(170))
+            { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }, FillBehavior = FillBehavior.Stop });
+        }
+    }
     internal void FilterForChecks(string query, string group = "all") { search.Text = query; selectedGroup = group; page = 0; RefreshGrid(); }
     internal int FilteredCountForChecks => filtered.Length;
     private void RefreshGrid()
     {
-        filtered = DesktopLibrary.Filter(items, settings.DesktopGroups, selectedGroup, search.Text);
+        filtered = SelectItems(selectedGroup, search.Text);
+        sectionTitle.Text = selectedGroup == "all" ? "全部桌面项目" : selectedGroup == "ungrouped" ? "未分组" : selectedGroup.StartsWith("preset:", StringComparison.Ordinal)
+            ? DesktopLibrary.Presets.First(x => x.Id == selectedGroup[7..]).Name : settings.DesktopGroups.FirstOrDefault(x => x.Id == selectedGroup)?.Name ?? "我的分组";
         page = Math.Clamp(page, 0, Math.Max(0, (filtered.Length - 1) / PageSize));
         grid.Children.Clear(); tiles.Clear();
         foreach (var item in filtered.Skip(page * PageSize).Take(PageSize))
         {
             var content = new StackPanel { VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Center };
             icons.TryGetValue(item.Target, out var image);
-            var icon = new Image { Source = image, Width = 48, Height = 48 };
+            var icon = new Image { Source = image, Width = 52, Height = 52 };
             var placeholder = FeatureUi.Text("▦", 38, FeatureUi.Blue); placeholder.HorizontalAlignment = HorizontalAlignment.Center;
             placeholder.Visibility = image is null ? Visibility.Visible : Visibility.Collapsed;
-            var imageFrame = new Grid { Width = 48, Height = 48, Margin = new(0, 0, 0, 9) };
+            var zoom = new ScaleTransform(1, 1);
+            var imageFrame = new Grid { Width = 52, Height = 52, Margin = new(0, 0, 0, 11), RenderTransformOrigin = new(.5, .5), RenderTransform = zoom };
             imageFrame.Children.Add(icon); imageFrame.Children.Add(placeholder); content.Children.Add(imageFrame); tiles[item.Target] = (icon, placeholder);
-            var name = FeatureUi.Text(item.Name, 11); name.TextTrimming = TextTrimming.CharacterEllipsis; name.TextAlignment = TextAlignment.Center; name.MaxWidth = 92; content.Children.Add(name);
-            var button = FeatureUi.Button("", () => OpenItem(item)); button.Content = content; button.ToolTip = item.Name; button.Padding = new(7, 10, 7, 7); button.Background = Brushes.Transparent;
+            var name = FeatureUi.Text(item.Name, 11, LiquidGlass.Ink); name.TextTrimming = TextTrimming.CharacterEllipsis; name.TextAlignment = TextAlignment.Center; name.MaxWidth = 92; content.Children.Add(name);
+            var button = LiquidGlass.Button("", () => OpenItem(item)); button.Content = content; button.ToolTip = item.Name; button.Padding = new(7, 10, 7, 7); button.Background = Brushes.Transparent;
+            void Zoom(double value) => LiquidGlass.Scale(zoom, value, settings.ReducedMotion);
+            button.MouseEnter += (_, _) => { Zoom(1.15); button.Background = LiquidGlass.Tint(30); button.Opacity = 1; };
+            button.MouseLeave += (_, _) => { Zoom(button.IsKeyboardFocusWithin ? 1.15 : 1); button.Background = Brushes.Transparent; };
+            button.GotKeyboardFocus += (_, _) => Zoom(1.15); button.LostKeyboardFocus += (_, _) => Zoom(button.IsMouseOver ? 1.15 : 1);
+            button.PreviewMouseLeftButtonUp += (_, _) => Zoom(button.IsMouseOver ? 1.15 : 1);
             var menu = new ContextMenu(); var pinItem = new MenuItem { Header = "固定到 Dock" }; pinItem.Click += (_, _) => pin(item); menu.Items.Add(pinItem);
             var move = new MenuItem { Header = "移到分组" };
             foreach (var group in settings.DesktopGroups) { var entry = new MenuItem { Header = group.Name }; entry.Click += (_, _) => Assign(item, group.Id); move.Items.Add(entry); }
             var none = new MenuItem { Header = "未分组" }; none.Click += (_, _) => Assign(item, null); move.Items.Add(none); menu.Items.Add(move); button.ContextMenu = menu;
             System.Windows.Point pressed = default;
-            button.PreviewMouseLeftButtonDown += (_, e) => pressed = e.GetPosition(button);
+            button.PreviewMouseLeftButtonDown += (_, e) => { pressed = e.GetPosition(button); Zoom(1.05); };
             button.PreviewMouseMove += (_, e) =>
             {
                 var p = e.GetPosition(button);
                 if (e.LeftButton == MouseButtonState.Pressed && (p - pressed).Length > 8)
-                    DragDrop.DoDragDrop(button, new DataObject(typeof(DockItem), item), DragDropEffects.Move);
+                { Zoom(1); DragDrop.DoDragDrop(button, new DataObject(typeof(DockItem), item), DragDropEffects.Move); }
             };
             grid.Children.Add(button);
         }
-        if (filtered.Length == 0) grid.Children.Add(FeatureUi.Text(search.Text.Length > 0 ? "没有找到匹配项目" : "这里还没有桌面项目", 13, FeatureUi.Muted));
-        caption.Text = $"{filtered.Length} 个项目 · 拖到左侧分组，或右键整理";
+        if (filtered.Length == 0) grid.Children.Add(FeatureUi.Text(search.Text.Length > 0 ? "没有找到匹配项目" : "这里还没有项目", 13, LiquidGlass.Muted));
+        caption.Text = $"{filtered.Length} 个项目 · 滚轮翻页 · 拖到我的分组整理";
         pageLabel.Text = $"{page + 1} / {Math.Max(1, (filtered.Length + PageSize - 1) / PageSize)}";
+        previousPage.IsEnabled = page > 0; previousPage.Opacity = page > 0 ? 1 : .3;
+        nextPage.IsEnabled = (page + 1) * PageSize < filtered.Length; nextPage.Opacity = nextPage.IsEnabled ? 1 : .3;
     }
     private void OpenItem(DockItem item) { launch(item); Dismiss(); }
 }

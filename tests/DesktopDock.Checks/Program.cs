@@ -209,8 +209,8 @@ foreach (double iconSize in new[] { 32d, 48, 80 })
 }
 Check(System.Text.Json.JsonSerializer.Deserialize<DockSettings>("{}")!.Reflections, "Existing settings default to reflections");
 var featureSettings = System.Text.Json.JsonSerializer.Deserialize<DockSettings>("{}")!;
-Check(featureSettings.Widgets.Clock && featureSettings.Widgets.Calendar && featureSettings.Widgets.Weather && featureSettings.Widgets.Light,
-    "Existing settings gain light desktop widgets");
+Check(featureSettings.Widgets.Clock && featureSettings.Widgets.Weather && featureSettings.Widgets.Light,
+    "Existing settings gain transparent desktop widgets");
 var firstGroup = new DesktopGroup { Name = "Work", Targets = ["Example.lnk", "example.lnk"] };
 var secondGroup = new DesktopGroup { Name = "Play" };
 var groups = DesktopLibrary.NormalizeGroups([firstGroup, secondGroup, new() { Id = "invalid" }]);
@@ -225,14 +225,16 @@ Check(DesktopLibrary.Filter(library, groups, "ungrouped", "").Length == 3, "Ungr
 var positions = new WidgetOptions { City = "   ", Positions = new() { ["clock"] = new(-5, 90000), ["calendar"] = new(double.NaN, 2), ["unknown"] = new(1, 2) } };
 positions.Normalize();
 Check(positions.City.Length > 0 && positions.Positions.Count == 1 && positions.Positions["clock"] == new WidgetPosition(0, 20000), "Widget positions and city normalize safely");
-foreach (int year in new[] { 1900, 2000, 2024, 2026, 2028, 2100 })
-foreach (int monthNumber in Enumerable.Range(1, 12))
-{
-    var days = CalendarMonth.Days(new(year, monthNumber, 15));
-    Check(days.Length == 42 && days[0].DayOfWeek == DayOfWeek.Monday, "Calendar starts Monday and includes six weeks");
-    Check(days.Count(x => x.Month == monthNumber && x.Year == year) == DateTime.DaysInMonth(year, monthNumber), "Calendar includes every day including leap boundaries");
-    Check(days.Zip(days.Skip(1)).All(x => x.First.AddDays(1) == x.Second), "Calendar days remain contiguous across year boundaries");
-}
+var migratedWidgets = System.Text.Json.JsonSerializer.Deserialize<WidgetOptions>("""{"Calendar":true,"Positions":{"calendar":{"X":20,"Y":30},"clock":{"X":10,"Y":20}}}""")!;
+migratedWidgets.Normalize();
+Check(migratedWidgets.Positions.Count == 1 && !System.Text.Json.JsonSerializer.Serialize(migratedWidgets).Contains("Calendar"), "Removed calendar settings migrate without reappearing");
+foreach (var (target, directory, category) in new[] { ("Example.LNK", false, "apps"), ("shell:MyComputerFolder", false, "apps"), ("ms-settings:", false, "apps"), ("Example.pdf", false, "documents"), ("Example.JPG", false, "media"), ("Example.mp3", false, "media"), ("Archive.zip", false, "other"), ("Folder.jpg", true, "folders") })
+    Check(DesktopLibrary.Category(new("Example", target), directory) == category, "Automatic category handles extensions, system targets and folders");
+var pageWheel = new PageWheel();
+Check(pageWheel.Update(-40, 0) == 0 && pageWheel.Update(-40, .04) == 0 && pageWheel.Update(-40, .08) == 1, "Fine wheel deltas accumulate into one page");
+Check(pageWheel.Update(-120, .1) == 0 && pageWheel.Update(-240, .12) == 0, "Trackpad burst does not skip multiple pages");
+Check(pageWheel.Update(120, .3) == -1, "Reverse wheel navigates back");
+Check(pageWheel.Update(-60, 1) == 0 && pageWheel.Update(-60, 2) == 0, "Separated partial wheel gestures do not accumulate");
 const string weatherFixture = """
 {"current":{"temperature_2m":18.4,"apparent_temperature":17.1,"relative_humidity_2m":54,"wind_speed_10m":8.2,"weather_code":2,"is_day":1},"daily":{"temperature_2m_max":[23.1],"temperature_2m_min":[12.5]}}
 """;

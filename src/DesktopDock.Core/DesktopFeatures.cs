@@ -14,7 +14,6 @@ public sealed record WidgetPosition(double X, double Y);
 public sealed class WidgetOptions
 {
     public bool Clock { get; set; } = true;
-    public bool Calendar { get; set; } = true;
     public bool Weather { get; set; } = true;
     public bool Light { get; set; } = true;
     public string City { get; set; } = "洛阳";
@@ -22,7 +21,7 @@ public sealed class WidgetOptions
     public void Normalize()
     {
         City = string.IsNullOrWhiteSpace(City) ? "洛阳" : City.Trim()[..Math.Min(City.Trim().Length, 80)];
-        Positions = (Positions ?? []).Where(x => x.Key is "clock" or "calendar" or "weather" && x.Value is not null
+        Positions = (Positions ?? []).Where(x => x.Key is "clock" or "weather" && x.Value is not null
             && double.IsFinite(x.Value.X) && double.IsFinite(x.Value.Y))
             .ToDictionary(x => x.Key, x => new WidgetPosition(Math.Clamp(x.Value.X, 0, 20000), Math.Clamp(x.Value.Y, 0, 20000)));
     }
@@ -30,6 +29,21 @@ public sealed class WidgetOptions
 
 public static class DesktopLibrary
 {
+    public static readonly (string Id, string Name, string Glyph)[] Presets =
+    [ ("apps", "应用", "▦"), ("folders", "文件夹", "▱"), ("documents", "文档", "≡"), ("media", "媒体", "▷"), ("other", "其他", "⋯") ];
+
+    public static string Category(DockItem item, bool directory = false)
+    {
+        if (directory) return "folders";
+        if (item.Target.StartsWith("shell:", StringComparison.OrdinalIgnoreCase) || item.Target.StartsWith("ms-settings:", StringComparison.OrdinalIgnoreCase)) return "apps";
+        return Path.GetExtension(item.Target).ToLowerInvariant() switch
+        {
+            ".lnk" or ".url" or ".exe" or ".appref-ms" => "apps",
+            ".txt" or ".md" or ".pdf" or ".doc" or ".docx" or ".xls" or ".xlsx" or ".ppt" or ".pptx" or ".csv" or ".rtf" or ".odt" => "documents",
+            ".png" or ".jpg" or ".jpeg" or ".webp" or ".gif" or ".svg" or ".bmp" or ".ico" or ".heic" or ".mp4" or ".mov" or ".mkv" or ".avi" or ".mp3" or ".wav" or ".flac" or ".m4a" => "media",
+            _ => "other"
+        };
+    }
     public static List<DesktopGroup> NormalizeGroups(IEnumerable<DesktopGroup>? groups)
     {
         var result = new List<DesktopGroup>();
@@ -87,16 +101,6 @@ public static class DesktopLibrary
         foreach (var group in groups) group.Targets.RemoveAll(x => string.Equals(x, target, StringComparison.OrdinalIgnoreCase));
         var chosen = groups.FirstOrDefault(x => x.Id == groupId);
         chosen?.Targets.Add(target);
-    }
-}
-
-public static class CalendarMonth
-{
-    public static DateOnly[] Days(DateOnly month)
-    {
-        var first = new DateOnly(month.Year, month.Month, 1);
-        int before = ((int)first.DayOfWeek + 6) % 7;
-        return Enumerable.Range(0, 42).Select(i => first.AddDays(i - before)).ToArray();
     }
 }
 
