@@ -1,8 +1,53 @@
-# desktop-dock
+<p align="center">
+  <img src="src/DesktopDock.App/Assets/Brand.png" alt="Desktop Dock Logo" width="200">
+</p>
 
-面向 Windows 11 的原生桌面 Dock。使用系统图形合成、可恢复的桌面图标隐藏和 macOS 风格的连续悬停放大。
+<h1 align="center">Desktop Dock</h1>
 
-> 当前为 0.1.0-preview.23 测试版，支持安装、开机自启和软件内更新；尚未发布稳定版本。
+<p align="center">
+  让 Windows 桌面简洁、有序。
+  <br>
+  透明图标、轻盈倒影与连续悬停动画，打造 macOS 风格的桌面 Dock。
+</p>
+
+<p align="center">
+  <strong>Windows 11 · x64 · 原生桌面应用</strong>
+</p>
+
+<p align="center">
+  <a href="https://github.com/lpd2005/desktop-dock/releases">下载软件</a>
+  &nbsp;·&nbsp;
+  <a href="docs/USER_GUIDE.md">使用说明</a>
+  &nbsp;·&nbsp;
+  <a href="CHANGELOG.md">更新记录</a>
+  &nbsp;·&nbsp;
+  <a href="https://github.com/lpd2005/desktop-dock/issues">反馈问题</a>
+</p>
+
+---
+
+## 界面预览 · Preview
+
+| 外观与动画 | 桌面小组件 |
+| :---: | :---: |
+| ![外观与动画设置：Dock 预览、图标大小、悬停放大及倒影开关](docs/images/settings-appearance.png) | ![桌面小组件设置：时间、天气、透明背景与城市设置](docs/images/settings-widgets.png) |
+
+以上界面使用示例配置展示；图标、布局与组件可在设置中调整。
+
+## 下载与安装 · Install
+
+请前往 [Releases 发布页面](https://github.com/lpd2005/desktop-dock/releases) 下载。当前为 **0.1.0-preview.23 测试版**，尚未发布稳定版本。
+
+支持 **Windows 11 22H2 或更新版本、x64**，目前以主显示器为主要支持范围。运行包自带 .NET，无需额外安装运行时。
+
+| 下载方式 | 适合的使用方式 | 下载 |
+| :--- | :--- | :--- |
+| Windows 安装包（推荐） | 按向导安装，提供开始菜单入口与卸载，仅为当前用户安装 | [Setup-x64.exe](https://github.com/lpd2005/desktop-dock/releases/download/v0.1.0-preview.23/DesktopDock-0.1.0-preview.23-Setup-x64.exe) |
+| 便携版 | 完整解压后运行 `DesktopDock.exe` | [win-x64.zip](https://github.com/lpd2005/desktop-dock/releases/download/v0.1.0-preview.23/DesktopDock-0.1.0-preview.23-win-x64.zip) |
+
+安装后，在 **设置 → 启动与更新** 中开启登录后自启、检查和下载安装更新；自启默认关闭，升级保留已有配置。具体操作见 [使用说明](docs/USER_GUIDE.md)。
+
+> 当前安装包暂未签名，Windows 可能显示“未知发布者”。请从本仓库的 Releases 下载，并可使用附件中的 `SHA256SUMS.txt` 核对文件。
 
 ## 已实现
 
@@ -32,11 +77,9 @@
 
 原生任务栏的位置由用户在 Windows 中设置。任务栏增强目前仅处理主屏顶部任务栏；不自动移动任务栏。首期支持 Windows 11 22H2 或更新版本、x64、主显示器与常见显示缩放，顶部任务栏还要求系统或现有工具已支持该位置。
 
-## 运行与恢复
+## 使用与恢复
 
-在 [Releases](https://github.com/lpd2005/desktop-dock/releases) 下载 `DesktopDock-版本号-Setup-x64.exe`，按提示安装即可。默认仅为当前 Windows 用户安装，无需管理员权限，提供开始菜单与卸载；自带 .NET，不需要另装运行时。安装包暂未签名，Windows 可能显示发布者未知，请核对官方发布来源。
-
-也可下载 `win-x64.zip`，完整解压后运行 DesktopDock.exe。首次正常运行会按设置隐藏桌面图标，退出时恢复。详细操作见 [使用说明](docs/USER_GUIDE.md)，同一说明随安装包和便携包提供。
+首次正常运行会按设置隐藏桌面图标，退出时恢复。[使用说明](docs/USER_GUIDE.md) 同时随安装包和便携包提供。
 
 在“设置 → 启动与更新”中启用登录后自启，默认关闭；若 Windows 禁用了启动项，需要在系统“启动应用”中开启。该设置只作用于当前用户，不提升进程优先级。更新检查默认每天最多一次，也可手动检查；不会自动下载或安装。用户选择下载安装后启动安装向导，保留固定应用、分组和组件设置。测试版接收后续测试版和正式版，正式版默认只接收正式更新。
 
