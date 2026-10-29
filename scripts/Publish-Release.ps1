@@ -35,7 +35,12 @@ try {
     $taskExisting = & $taskGh release view $taskTag --repo lpd2005/desktop-dock --json isDraft,targetCommitish 2>$null
     if ($LASTEXITCODE -eq 0) {
         $taskRelease = $taskExisting | ConvertFrom-Json
-        if (-not $taskRelease.isDraft -or $taskRelease.targetCommitish -ne $taskHead) { throw 'Refusing to replace an already published release or another commit.' }
+        if ($taskRelease.targetCommitish -ne $taskHead) { throw 'Refusing to replace release for another commit.' }
+        if (-not $taskRelease.isDraft) {
+            Write-Host "Release $taskTag is already published for this commit; skipping upload and publish."
+            & $taskGh release view $taskTag --repo lpd2005/desktop-dock --json url,isDraft,isPrerelease --jq '{url,isDraft,isPrerelease}'
+            return
+        }
     } else {
         $taskArgs = @('release','create',$taskTag,'--repo','lpd2005/desktop-dock','--target',$taskHead,'--title',"Desktop Dock $taskVersion",'--notes-file',$taskNotes,'--draft')
         if ($taskVersion.Contains('-')) { $taskArgs += '--prerelease' }
