@@ -8,26 +8,44 @@ on:
         description: Publish after building and checking the installer
         type: boolean
         default: false
+      verify_only:
+        description: Only verify the existing published version; do not build or upload
+        type: boolean
+        default: false
 permissions:
   contents: write
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ github.repository }}
   cancel-in-progress: false
 jobs:
   package:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v6
+      - name: Check release scripts
+        shell: pwsh
+        run: ./scripts/Test-ReleasePublishing.ps1
+      - name: Check existing release
+        id: release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERIFY_ONLY: ${{ inputs.verify_only }}
+        run: ./scripts/Publish-Release.ps1 -CheckOnly -VerifyPublished:($env:VERIFY_ONLY -eq 'true')
       - uses: actions/setup-dotnet@v5
+        if: steps.release.outputs.build_required == 'true'
         with:
           dotnet-version: '10.0.x'
       - name: Build portable package and installer
+        if: steps.release.outputs.build_required == 'true'
         shell: pwsh
         run: ./scripts/Installer.ps1
       - name: Check install, upgrade and uninstall
+        if: steps.release.outputs.build_required == 'true'
         shell: pwsh
         run: ./scripts/Test-Installer.ps1
       - name: Create release draft or publish
+        if: steps.release.outputs.build_required == 'true'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
