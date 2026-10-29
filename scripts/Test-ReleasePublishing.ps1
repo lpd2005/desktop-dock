@@ -131,6 +131,8 @@ if ($args[0] -eq 'api') {
     Test-Publishing 'manual default retains draft' { param($s) $s.release.draft = $true } -Mutations @('upload')
     Test-Publishing 'concurrently published draft blocks upload' { param($s) $s.release.draft = $true; $s.race = $true } -Arguments @('-Publish') -Success $false
     Write-Host "$taskCount release publishing checks passed. No network access or real publication."
+    # GitHub's PowerShell runner propagates the last native exit code, including expected failures above.
+    $global:LASTEXITCODE = 0
 } finally {
     Set-Location -LiteralPath $taskOldLocation
     foreach ($taskName in $taskEnvironment.Keys) { [Environment]::SetEnvironmentVariable($taskName, $taskEnvironment[$taskName], 'Process') }
