@@ -28,11 +28,13 @@
 
 ## 界面预览 · Preview
 
+![Desktop Dock 桌面效果：透明图标、半高倒影与时间和天气小组件](docs/images/desktop-preview.png)
+
 | 外观与动画 | 桌面小组件 |
 | :---: | :---: |
 | ![外观与动画设置：Dock 预览、图标大小、悬停放大及倒影开关](docs/images/settings-appearance.png) | ![桌面小组件设置：时间、天气、透明背景与城市设置](docs/images/settings-widgets.png) |
 
-以上界面使用示例配置展示；图标、布局与组件可在设置中调整。
+桌面效果与设置界面预览；图标、布局与组件可在设置中调整。
 
 ## 下载与安装 · Install
 
@@ -46,6 +48,8 @@
 | 便携版 | 完整解压后运行 `DesktopDock.exe` | [win-x64.zip](https://github.com/lpd2005/desktop-dock/releases/download/v0.1.0-preview.23/DesktopDock-0.1.0-preview.23-win-x64.zip) |
 
 安装后，在 **设置 → 启动与更新** 中开启登录后自启、检查和下载安装更新；自启默认关闭，升级保留已有配置。具体操作见 [使用说明](docs/USER_GUIDE.md)。
+
+**注意** 该软件占用后台内存约为 **70M**
 
 > 当前安装包暂未签名，Windows 可能显示“未知发布者”。请从本仓库的 Releases 下载，并可使用附件中的 `SHA256SUMS.txt` 核对文件。
 
