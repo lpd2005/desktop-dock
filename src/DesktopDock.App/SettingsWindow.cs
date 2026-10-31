@@ -20,6 +20,8 @@ internal sealed class SettingsWindow : Window
     private readonly List<(Button Button, FrameworkElement Page, string Title, string Description)> pages = [];
     private readonly Dictionary<string, ImageSource> iconCache = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<Image> previewIcons = [];
+    private readonly Border storageNotice = new() { Visibility = Visibility.Collapsed, CornerRadius = new(12), Background = Brush("#FFF2D9"), Padding = new(13), Margin = new(0, 0, 0, 14) };
+    private bool storagePending;
     private readonly int? systemPageIndex;
     private readonly int aboutPageIndex;
     private bool refreshingWidgets;
@@ -57,6 +59,7 @@ internal sealed class SettingsWindow : Window
         var heading = new StackPanel { Margin = new(0, 0, 0, 21) }; pageTitle.FontWeight = FontWeights.SemiBold;
         pageDescription.Margin = new(0, 7, 0, 0); pageDescription.TextWrapping = TextWrapping.Wrap;
         heading.Children.Add(pageTitle); heading.Children.Add(pageDescription); DockPanel.SetDock(heading, Dock.Top); main.Children.Add(heading);
+        DockPanel.SetDock(storageNotice, Dock.Top); main.Children.Add(storageNotice);
         main.Children.Add(new ScrollViewer { Content = pageContent, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled });
         void Page(string title, string description, FrameworkElement page)
         {
@@ -88,7 +91,7 @@ internal sealed class SettingsWindow : Window
         citySection.Children.Add(Hint("填写城市名称，组件会显示解析后的地区。不自动获取设备位置。"));
         var cityRow = new DockPanel { Margin = new(0, 12, 0, 5) };
         var city = new TextBox { Text = settings.Widgets.City, MaxLength = 80, BorderThickness = new(0), Background = Brushes.Transparent, Padding = new(11, 9, 11, 9), FontSize = 13 };
-        void SaveCity() { settings.Widgets.City = city.Text.Trim(); apply(); city.Text = settings.Widgets.City; status.Text = "天气城市已保存"; }
+        void SaveCity() { settings.Widgets.City = city.Text.Trim(); apply(); city.Text = settings.Widgets.City; SetStatus("天气城市已保存"); }
         city.KeyDown += (_, e) => { if (e.Key == System.Windows.Input.Key.Enter) { SaveCity(); e.Handled = true; } };
         var citySave = FeatureUi.Button("应用城市", SaveCity, true); citySave.Margin = new(9, 0, 0, 0); DockPanel.SetDock(citySave, Dock.Right); cityRow.Children.Add(citySave);
         cityRow.Children.Add(new Border { CornerRadius = new(10), Background = Brush("#F0F4FA"), Child = city }); citySection.Children.Add(cityRow);
@@ -148,6 +151,20 @@ internal sealed class SettingsWindow : Window
     internal void SelectPageForChecks(int index) => SelectPage(index);
     internal void SelectSystemPage() { if (systemPageIndex is int index) SelectPage(index); }
     internal void SelectAboutPage() => SelectPage(aboutPageIndex);
+    internal void SetStorageNotice(string? message, string action, Action retry)
+    {
+        storagePending = message is not null;
+        storageNotice.Visibility = storagePending ? Visibility.Visible : Visibility.Collapsed;
+        if (message is not null)
+        {
+            var panel = new StackPanel(); panel.Children.Add(Hint(message));
+            var button = FeatureUi.Button(action, retry); button.HorizontalAlignment = HorizontalAlignment.Left; button.Margin = new(0, 8, 0, 0);
+            panel.Children.Add(button); storageNotice.Child = panel;
+        }
+        else storageNotice.Child = null;
+        SetStatus("设置自动保存");
+    }
+    private void SetStatus(string text) => status.Text = storagePending ? "更改尚未保存" : text;
     internal static ControlTemplate SwitchTemplate => switchTemplate;
     private FrameworkElement BuildPreview()
     {
@@ -176,7 +193,7 @@ internal sealed class SettingsWindow : Window
         var slider = new Slider { Minimum = min, Maximum = max, Value = value, Width = 135, VerticalAlignment = VerticalAlignment.Center, SmallChange = factor ? .05 : 1, IsMoveToPointEnabled = true };
         slider.Template = sliderTemplate;
         var caption = FeatureUi.Text(factor ? $"{value:0.00}×" : $"{value:0}", 11); caption.Width = 43; caption.TextAlignment = TextAlignment.Right;
-        slider.ValueChanged += (_, _) => { setter(slider.Value); caption.Text = factor ? $"{slider.Value:0.00}×" : $"{slider.Value:0}"; foreach (var icon in previewIcons) icon.Width = icon.Height = Math.Clamp(settings.IconSize * .72, 24, 48); apply(); status.Text = "设置已保存"; };
+        slider.ValueChanged += (_, _) => { setter(slider.Value); caption.Text = factor ? $"{slider.Value:0.00}×" : $"{slider.Value:0}"; foreach (var icon in previewIcons) icon.Width = icon.Height = Math.Clamp(settings.IconSize * .72, 24, 48); apply(); SetStatus("设置已保存"); };
         controls.Children.Add(slider); controls.Children.Add(caption); Row(content, title, description, controls);
     }
     private CheckBox AddCheck(Panel content, string title, string description, bool value, Action<bool> setter)
@@ -184,8 +201,8 @@ internal sealed class SettingsWindow : Window
         var box = new CheckBox { IsChecked = value, Width = 38, Height = 22, Cursor = System.Windows.Input.Cursors.Hand };
         System.Windows.Automation.AutomationProperties.SetName(box, title);
         box.Template = switchTemplate;
-        box.Checked += (_, _) => { if (!refreshingWidgets) { setter(true); apply(); status.Text = "设置已保存"; } };
-        box.Unchecked += (_, _) => { if (!refreshingWidgets) { setter(false); apply(); status.Text = "设置已保存"; } };
+        box.Checked += (_, _) => { if (!refreshingWidgets) { setter(true); apply(); SetStatus("设置已保存"); } };
+        box.Unchecked += (_, _) => { if (!refreshingWidgets) { setter(false); apply(); SetStatus("设置已保存"); } };
         Row(content, title, description, box); return box;
     }
     private static ControlTemplate CreateSliderTemplate() => (ControlTemplate)System.Windows.Markup.XamlReader.Parse("""
@@ -230,5 +247,5 @@ internal sealed class SettingsWindow : Window
         var dialog = new Microsoft.Win32.OpenFolderDialog(); if (dialog.ShowDialog(this) == true) { settings.Items.Add(new(System.IO.Path.GetFileName(dialog.FolderName), dialog.FolderName)); SaveItems(); }
     }
     private void RemoveSelected() { if (applications.SelectedIndex >= 0) { settings.Items.RemoveAt(applications.SelectedIndex); SaveItems(); } }
-    private void SaveItems() { settings.Normalize(); RefreshItems(); reload(); status.Text = "入口已保存"; }
+    private void SaveItems() { settings.Normalize(); RefreshItems(); reload(); SetStatus("入口已保存"); }
 }

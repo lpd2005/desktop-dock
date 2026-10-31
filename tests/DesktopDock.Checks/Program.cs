@@ -38,13 +38,19 @@ try
     File.WriteAllText(file, "{invalid");
     Check(SettingsStore.Load(file).IconSize == 48, "Corrupt settings recover to defaults");
     var settings = new DockSettings { IconSize = 1000, Magnification = -1, Items = [new("Example", "example.exe"), new("Duplicate", "EXAMPLE.exe")] };
-    SettingsStore.Save(file, settings);
+    SettingsStore.Recover(file, settings);
     var loaded = SettingsStore.Load(file);
     Check(loaded.IconSize == 80 && loaded.Magnification == 1, "Untrusted settings bounded");
     Check(loaded.Items.Count == 1, "Duplicate targets removed");
     Check(!File.Exists(file + ".tmp"), "Atomic save completed");
+    File.WriteAllText(file, "{damaged-settings");
+    bool refusedDamagedSave = false;
+    try { SettingsStore.Save(file, new DockSettings()); }
+    catch (IOException) { refusedDamagedSave = true; }
+    Check(refusedDamagedSave && File.ReadAllText(file) == "{damaged-settings", "Damaged settings must not be silently overwritten");
 }
 finally { if (Directory.Exists(folder)) Directory.Delete(folder, true); }
+SettingsStoreChecks.Run(Check);
 var sixty = new SpringMotion();
 var oneTwenty = new SpringMotion();
 for (int i = 0; i < 60; i++) sixty.Step(100, 1d / 60, 36);

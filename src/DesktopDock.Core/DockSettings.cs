@@ -1,5 +1,3 @@
-using System.Text.Json;
-
 namespace DesktopDock.Core;
 
 public sealed record DockItem(string Name, string Target, string Arguments = "");
@@ -33,29 +31,5 @@ public sealed class DockSettings
             .DistinctBy(x => (x.Target.ToUpperInvariant(), x.Arguments)).Take(40).ToList();
         DesktopGroups = DesktopLibrary.NormalizeGroups(DesktopGroups);
         Widgets ??= new(); Widgets.Normalize();
-    }
-}
-
-public static class SettingsStore
-{
-    private static readonly JsonSerializerOptions Options = new() { WriteIndented = true };
-
-    public static DockSettings Load(string path)
-    {
-        try
-        {
-            var settings = JsonSerializer.Deserialize<DockSettings>(File.ReadAllText(path), Options) ?? new();
-            settings.Normalize();
-            return settings;
-        }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException or JsonException)
-        { return new(); }
-    }
-
-    public static void Save(string path, DockSettings settings)
-    {
-        settings.Normalize();
-        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
-        AtomicJson.Write(path, settings, Options);
     }
 }

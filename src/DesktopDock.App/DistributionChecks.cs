@@ -37,6 +37,13 @@ internal static class DistributionChecks
             using (var key = Registry.CurrentUser.OpenSubKey(registryPath))
                 Require((string?)key?.GetValue("DesktopDock") == "\"" + Environment.ProcessPath + "\" --startup", "StartupCommandQuotesExecutableAndUsesStartupMode");
             startup.Set(false); Require(!startup.Enabled, "StartupCanBeRemoved");
+            string longExecutable = Path.Combine(Path.GetTempPath(), new string('x', 245), "DesktopDock.exe");
+            var longStartup = new StartupRegistration(longExecutable, registryPath);
+            Require(!longStartup.Enabled, "LongStartupPathDoesNotBreakSettingsConstruction");
+            Require(longStartup.UnavailableReason?.Contains("路径过长") == true, "LongStartupPathExplainsUnavailableRegistration");
+            bool longRejected = false;
+            try { longStartup.Set(true); } catch (InvalidOperationException) { longRejected = true; }
+            using (var key = Registry.CurrentUser.OpenSubKey(registryPath)) Require(longRejected && key?.GetValue("DesktopDock") is null, "UnsupportedStartupNeverWritesRegistry");
             using (var key = Registry.CurrentUser.CreateSubKey(registryPath)) key.SetValue("DesktopDock", "unrelated-command");
             startup.Set(false);
             using (var key = Registry.CurrentUser.OpenSubKey(registryPath)) Require((string?)key?.GetValue("DesktopDock") == "unrelated-command", "StartupDoesNotDeleteUnrelatedValue");
@@ -142,6 +149,18 @@ internal static class DistributionChecks
                 Require(opened.Count == 5 && opened.All(x => x.StartsWith("https://github.com/" + ReleaseFeed.Repository + "/", StringComparison.Ordinal) || x == "https://github.com/" + ReleaseFeed.Repository), "AboutHelpLinksUseProjectWithoutLaunchingBrowsers");
             }
             finally { window.Close(); }
+            var longPage = new SystemSettingsPage(new(), updates, longStartup, () => { }, () => { });
+            var longWindow = new SettingsWindow(new(), () => { }, () => { }, () => { }, taskbar, longPage);
+            try
+            {
+                longWindow.Show(); longWindow.SelectSystemPage(); longWindow.UpdateLayout(); await WaitFor(() => longPage.IsLoaded);
+                Require(!Children<CheckBox>(longPage).Single(x => System.Windows.Automation.AutomationProperties.GetName(x) == "开机自启").IsEnabled
+                    && Children<TextBlock>(longPage).Any(x => x.Text.Contains("路径过长")), "LongStartupOnlyDisablesStartupSwitch");
+                longWindow.SelectAboutPage(); longWindow.UpdateLayout();
+                Require(Children<AboutPage>(longWindow).Any() && longWindow.IsVisible, "LongStartupKeepsOtherSettingsPagesAvailable");
+            }
+            finally { longWindow.Close(); }
+            foreach (var result in await Controller.CheckSettingsRecovery(Path.Combine(data, "recovery-ui"))) checks.Add(result.Key, result.Value);
         }
         finally { Registry.CurrentUser.DeleteSubKeyTree(registryPath, throwOnMissingSubKey: false); }
         return checks;

@@ -11,6 +11,7 @@ internal sealed partial class Controller : IDisposable
     private readonly string data;
     private readonly DesktopIcons desktop;
     private readonly DockSettings settings;
+    private readonly string settingsPath;
     private readonly bool preview;
     private readonly bool showWidgets;
     private readonly Forms.NotifyIcon tray;
@@ -23,14 +24,21 @@ internal sealed partial class Controller : IDisposable
     private (bool Enabled, bool AutoHide, bool Glass, bool Light, bool ReducedMotion)? taskbarConfiguration;
     private SettingsWindow? settingsWindow;
     private bool disposed;
+    private bool recoveryRequired, storageNoticeQueued;
+    private string? storageMessage;
 
     public Controller(System.Windows.Application application, string data, DesktopIcons desktop, bool preview, bool stress, bool showWidgets = true)
     {
         this.application = application; this.data = data; this.desktop = desktop; this.preview = preview;
         this.showWidgets = showWidgets;
-        string file = Path.Combine(data, "settings.json");
-        bool firstRun = !File.Exists(file);
-        settings = SettingsStore.Load(file);
+        settingsPath = Path.Combine(data, "settings.json");
+        var loaded = SettingsStore.Read(settingsPath);
+        bool firstRun = loaded.State == SettingsLoadState.Missing;
+        settings = loaded.Settings;
+        recoveryRequired = loaded.NeedsRecovery;
+        if (recoveryRequired) storageMessage = loaded.State == SettingsLoadState.BackupAvailable
+            ? "原配置无法读取，已临时载入最近有效备份。确认后会保留原件并保存当前配置；恢复前不修改桌面和任务栏。"
+            : "原配置无法读取，当前使用临时配置。确认后会保留原件并保存当前配置；恢复前不修改桌面和任务栏。";
         if (firstRun)
         {
             settings.HideDesktopIcons = !preview;
@@ -42,7 +50,7 @@ internal sealed partial class Controller : IDisposable
                 new("下载", Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads")),
                 new("回收站", "shell:RecycleBinFolder")];
         }
-        if (preview) settings.HideDesktopIcons = false;
+        if (preview) { settings.HideDesktopIcons = false; recoveryRequired = false; storageMessage = null; }
         if (stress && preview)
         {
             var defaults = settings.Items.ToArray();
@@ -79,18 +87,51 @@ internal sealed partial class Controller : IDisposable
     public async Task Start()
     {
         await dock.LoadIcons();
-        desktop.Apply(settings.HideDesktopIcons);
-        ApplyTaskbar();
-        if (showWidgets) widgets.Apply();
+        desktop.Apply(!recoveryRequired && settings.HideDesktopIcons);
+        if (!recoveryRequired) { ApplyTaskbar(); if (showWidgets) widgets.Apply(); }
+        else if (!preview) OpenSettings();
         if (!preview) _ = updates.RunAutomaticChecks(() => settings.AutoCheckUpdates);
     }
     internal void RepositionAfterStartup() => dock.Reposition();
     private void Save()
     {
-        if (!preview) SettingsStore.Save(Path.Combine(data, "settings.json"), settings);
+        if (preview) return;
+        if (recoveryRequired) { RefreshStorageNotice(); return; }
+        try { SettingsStore.Save(settingsPath, settings); storageMessage = null; }
+        catch (SettingsRecoveryRequiredException)
+        { recoveryRequired = true; storageMessage = "原配置已无法正常读取，更改尚未保存。确认恢复后会保留原件并保存当前配置。"; }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or System.Security.SecurityException)
+        { storageMessage = "暂时无法保存配置。更改尚未保存，请检查文件权限或占用，解除后重试。"; }
+        RefreshStorageNotice();
+    }
+    private void RecoverSettings()
+    {
+        if (preview || !recoveryRequired) return;
+        try { SettingsStore.Recover(settingsPath, settings); recoveryRequired = false; storageMessage = null; ApplyRuntime(); RefreshStorageNotice(); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or System.Security.SecurityException)
+        { storageMessage = "恢复尚未完成。原配置或备份可能正在被使用，请解除占用后重试；如果文件已被其他程序修改，请重新启动 Dock 后再检查。"; RefreshStorageNotice(); }
+    }
+    private void RetrySave() { Save(); if (storageMessage is null) ApplyRuntime(); }
+    private void RefreshStorageNotice()
+    {
+        settingsWindow?.SetStorageNotice(storageMessage, recoveryRequired ? "确认恢复并保存" : "重试保存", recoveryRequired ? RecoverSettings : RetrySave);
+        if (storageMessage is not null && settingsWindow is null && !storageNoticeQueued)
+        {
+            storageNoticeQueued = true;
+            application.Dispatcher.BeginInvoke(() => { storageNoticeQueued = false; if (!disposed && storageMessage is not null) OpenSettings(); });
+        }
     }
     private void DockChanged() { Save(); settingsWindow?.RefreshItems(); }
-    private void Apply() { Save(); desktop.Apply(settings.HideDesktopIcons); dock.ApplySettings(); ApplyTaskbar(); if (showWidgets) widgets.Apply(); }
+    private void Apply()
+    {
+        Save(); if (storageMessage is null) ApplyRuntime();
+    }
+    private void ApplyRuntime()
+    {
+        desktop.Apply(!recoveryRequired && settings.HideDesktopIcons); dock.ApplySettings();
+        if (!recoveryRequired) { ApplyTaskbar(); if (showWidgets) widgets.Apply(); }
+        else { taskbar.Stop(); taskbarConfiguration = null; }
+    }
     public void ToggleApplications()
     {
         desktopPanel ??= new(settings, Save, dock.RefreshOcclusion, item => dock.OpenFromPanel(item), item => _ = PinFromPanel(item));
@@ -122,6 +163,7 @@ internal sealed partial class Controller : IDisposable
             settingsWindow = new(settings, Apply, () => { Save(); _ = dock.LoadIcons(); }, Quit, taskbar,
                 new SystemSettingsPage(settings, updates, startup, Save, Quit));
             settingsWindow.Closed += (_, _) => { settingsWindow = null; dock.RefreshOcclusion(); };
+            settingsWindow.SetStorageNotice(storageMessage, recoveryRequired ? "确认恢复并保存" : "重试保存", recoveryRequired ? RecoverSettings : RetrySave);
             settingsWindow.Show();
             dock.RefreshOcclusion();
         }

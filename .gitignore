@@ -62,6 +62,7 @@ logs/
 *.db
 *.db-*
 *.bak
+*.corrupt-*
 
 # OS and temporary files
 .DS_Store

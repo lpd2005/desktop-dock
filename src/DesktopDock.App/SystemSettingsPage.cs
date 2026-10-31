@@ -23,7 +23,7 @@ internal sealed class SystemSettingsPage : StackPanel
         System.Windows.Automation.AutomationProperties.SetName(startupCheck, "开机自启");
         startupCheck.Click += (_, _) =>
         {
-            if (refreshing || startup is null) return;
+            if (refreshing || startup is null || startup.UnavailableReason is not null) return;
             try { startup.Set(startupCheck.IsChecked == true); RefreshStartup(); }
             catch (Exception e) when (e is System.IO.IOException or UnauthorizedAccessException or System.Security.SecurityException or InvalidOperationException)
             { startupStatus.Text = "设置失败，请确认当前用户有权限修改启动项。"; RefreshStartup(keepMessage: true); }
@@ -61,8 +61,8 @@ internal sealed class SystemSettingsPage : StackPanel
         refreshing = true;
         try
         {
-            startupCheck.IsEnabled = startup is not null; startupCheck.IsChecked = startup?.Enabled == true;
-            if (!keepMessage) startupStatus.Text = startup is null ? "预览或开发启动模式不修改系统启动项。" : startup.DisabledByWindows && startup.Enabled
+            startupCheck.IsEnabled = startup is not null && startup.UnavailableReason is null; startupCheck.IsChecked = startup?.Enabled == true;
+            if (!keepMessage) startupStatus.Text = startup is null ? "预览或开发启动模式不修改系统启动项。" : startup.UnavailableReason is string reason ? reason : startup.DisabledByWindows && startup.Enabled
                 ? "已登记启动项，但 Windows 已禁用；可在系统启动应用设置中重新开启。" : startup.Enabled ? "已开启。下次登录 Windows 后自动启动。" : "未开启。仅为当前 Windows 用户设置，无需管理员权限。";
         }
         catch (Exception e) when (e is System.IO.IOException or UnauthorizedAccessException or System.Security.SecurityException)
