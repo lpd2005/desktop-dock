@@ -16,3 +16,5 @@ This repository contains a planned Windows 11 desktop Dock application. Read REA
 ## Versioning
 
 Follow docs/PUBLISHING.md. Keep CHANGELOG.md accurate. Do not create application release tags or claim functionality exists until a runnable build has been verified.
+
+Use Conventional Commits for every new commit: `type: description` or `type(scope): description`, with a concise English description. Use `feat:` for features, `fix:` for fixes, and `docs:` for documentation-only changes; see docs/PUBLISHING.md for the full convention. Do not rewrite public history merely to rename old commits.

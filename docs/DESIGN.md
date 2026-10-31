@@ -59,7 +59,7 @@ EXE、快捷方式目标、应用 URI、应用标识和本次启动窗口用于�
 
 Chromium 浏览器入口仅带 `--source-shortcut-location` 启动来源标记时，按普通应用识别已有窗口，无需先由 Dock 启动。直接 EXE 和快捷方式解析后采用相同分类；完整路径避免将另一安装目录中的同名浏览器当成目标。网址、指定配置目录、独立网页应用、隐私模式、新窗口及未知参数仍保留独立入口语义，不从中猜测无关窗口。上游将该标记用于启动统计，并在普通快捷方式分类中排除它，参见 [Chromium 开关定义](https://chromium.googlesource.com/chromium/src/+/main/chrome/common/chrome_switches.h) 和 [快捷方式分类](https://chromium.googlesource.com/chromium/src/+/main/chrome/browser/profiles/profile_shortcut_manager_win.cc)。
 
-多窗口应用当前处理活动或最近关联的窗口；完整缩略图选择仍属后续范围。自定义启动代理、权限受限程序和特殊窗口需要继续兼容验证。无法可靠识别时保留双击启动，不猜测操作其他应用。
+多窗口应用点击图标时处理活动或最近关联的窗口；悬停后已经可以在缩略图卡片中选择指定窗口。自定义启动代理、权限受限程序和特殊窗口需要继续兼容验证。无法可靠识别时保留双击启动，不猜测操作其他应用。
 
 通过 ShowWindowAsync 最小化 / 恢复，保留应用内容；应用启动和切换不关闭或移动外部窗口。只有主动选择“关闭窗口”时才请求关闭对应窗口。用户主动开启的任务栏增强管理原生任务栏及其顶部预留工作区。
 

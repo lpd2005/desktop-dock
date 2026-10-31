@@ -51,6 +51,8 @@
 
 **注意** 该软件占用后台内存约为 **70M**
 
+该数字为用户当前使用环境的观察值，实际占用会随图标数量、组件、窗口预览及玻璃辅助进程变化，并非统一性能测试结果。测量记录与局限见 [验证记录](docs/VALIDATION.md)。
+
 > 当前安装包暂未签名，Windows 可能显示“未知发布者”。请从本仓库的 Releases 下载，并可使用附件中的 `SHA256SUMS.txt` 核对文件。
 
 ## 已实现
@@ -137,7 +139,9 @@ powershell -ExecutionPolicy Bypass -File scripts/Package.ps1
 
 ## 下一阶段
 
-文件夹展开、回收站状态及更完整的显示器变化处理尚待完善。完整多屏 Dock、顶部菜单栏和动态壁纸不属于本次预览。
+下一轮建议先完善配置备份与启动异常处理，补齐真实登录、锁屏 / 唤醒和性能基线验收；然后完善显示变化适配，再开发文件夹内容展开与回收站空 / 满状态。具体优先级、完成情况和验收标准统一见 [开发路线与下一步](docs/ROADMAP.md)。
+
+窗口预览、开机自启、安装包和软件内更新已经实现，不再列为待开发项目。完整多屏 Dock、顶部菜单栏和动态壁纸暂缓。
 
 运行标记依据可关联的可见或最小化窗口；隐藏、被系统隐藏的窗口及单独的后台进程不显示标记。资源管理器只统计文件浏览窗口，排除桌面、任务栏及其他 Shell 辅助窗口。网址、指定配置等独立入口只标记本次关联的窗口。
 
@@ -167,8 +171,8 @@ powershell -ExecutionPolicy Bypass -File scripts/Package.ps1
 
 天气由 [Open-Meteo](https://open-meteo.com/) 提供，[天气 API](https://open-meteo.com/en/docs) 和 [城市查询 API](https://open-meteo.com/en/docs/geocoding-api) 按其公共服务条款使用；仅发送填写的城市和查询坐标，不请求设备定位。中文城市优先查询市级名称，并显示解析后的地区以帮助核对同名地点。约每 30 分钟更新，可手动刷新；有效缓存被复用，失败时保留上次真实数据和更新时间，无缓存时显示暂不可用。安全预览展示组件外观，天气默认不联网。
 
-- [产品与实施计划](docs/PLAN.md)
-- [开发路线](docs/ROADMAP.md)
+- [产品与实施原则](docs/PLAN.md)
+- [开发路线与下一步](docs/ROADMAP.md)
 - [交互设计与问题修订](docs/DESIGN.md)
 - [验证记录与局限](docs/VALIDATION.md)
 - [内部代码整理](docs/REFACTORING.md)

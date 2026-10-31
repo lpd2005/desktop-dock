@@ -9,6 +9,25 @@
 
 不要直接把整个桌面、用户目录、聊天记录或截图批量放入仓库。示例配置使用占位值；截图和程序包也需要单独检查。
 
+## 提交说明规范
+
+所有新提交统一使用 Conventional Commits 格式：`type: description`；需要标明模块时可用 `type(scope): description`。描述使用简短的英文动词短语，说明实际完成的改动，不使用“update”“修改”等无法判断内容的单独标题。
+
+| 类型 | 用途 | 示例 |
+| --- | --- | --- |
+| feat | 新增应用功能 | `feat: add folder content previews` |
+| fix | 修复错误行为 | `fix: keep settings available for long portable paths` |
+| docs | 文档、使用说明与规划 | `docs: refresh roadmap and development priorities` |
+| refactor | 保持行为不变的代码整理 | `refactor: share window identity resolution` |
+| perf | 有依据的性能改善 | `perf: reuse cached icon layouts` |
+| test | 自动检查与测试数据 | `test: cover damaged settings recovery` |
+| build / ci | 构建打包 / 自动工作流 | `ci: skip rebuilding verified releases` |
+| chore | 其他维护 | `chore: update development tooling` |
+
+同一个提交围绕一个目的，不夹带无关修改；较复杂的变更在正文说明原因、验证方法与未覆盖范围。纯文档调整使用 `docs:`，不增加应用版本号或创建发布标签。以上示例只演示命名，不表示相应功能已经实现。
+
+这项约定适用于后续新提交，不为统一标题而重写已经公开的历史，也不移动已发布标签。提交前仍须检查差异、文件清单和隐私邮箱。
+
 ## 隐私检查
 
 - 不提交访问令牌、密码、API 密钥、私钥、签名证书及包含凭据的连接字符串。
@@ -21,7 +40,7 @@
 ## 版本发布
 
 - 日常提交不必创建软件版本。
-- 首个可运行原型通过检查后，再创建 `v0.1.0` 标签和对应 Release。
+- 为通过实际运行检查的应用版本创建对应标签和 Release，标签必须与 `Directory.Build.props` 一致；例如下一个预览版可用 `v0.1.0-preview.24`，不能因文档调整重复发布旧版本。
 - 后续可用 `v0.1.1` 表示修复版本、`v0.2.0` 表示下一阶段功能版本；测试版本可使用 `v0.2.0-alpha.1` 等名称。
 - 发布前完成构建和实际运行检查，更新 `CHANGELOG.md`，确认发布包不包含本地配置、日志或凭据。
 - 在同一个仓库发布各版本的程序包与更新说明，保留旧版本。
