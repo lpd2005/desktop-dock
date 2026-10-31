@@ -213,7 +213,7 @@ internal static class FeatureChecks
         try
         {
             preferences.Show();
-            foreach (var (index, name) in new[] { (0, "appearance"), (1, "widgets"), (2, "taskbar"), (3, "pinned") })
+            foreach (var (index, name) in new[] { (0, "appearance"), (1, "widgets"), (2, "taskbar"), (3, "pinned"), (4, "about") })
             {
                 preferences.SelectPageForChecks(index); preferences.UpdateLayout();
                 Capture(preferences, Path.Combine(data, "settings-" + name + ".png"));

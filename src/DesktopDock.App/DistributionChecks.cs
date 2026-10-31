@@ -124,6 +124,22 @@ internal static class DistributionChecks
                 picture.Render(window);
                 var encoder = new System.Windows.Media.Imaging.PngBitmapEncoder(); encoder.Frames.Add(System.Windows.Media.Imaging.BitmapFrame.Create(picture));
                 using var capture = File.Create(Path.Combine(data, "startup-updates-settings.png")); encoder.Save(capture);
+                Children<Button>(window).Single(x => x.Content as string == "关于").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                window.UpdateLayout();
+                var about = Children<AboutPage>(window).Single();
+                Require(Children<TextBlock>(about).Any(x => x.Text.Contains(AppVersion.Current)), "AboutPageShowsAssemblyVersion");
+                Children<Button>(about).Single(x => x.Content as string == "检查更新").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                window.UpdateLayout();
+                Require(Children<SystemSettingsPage>(window).Single() == page, "AboutUpdatesOpensExistingSystemPage");
+                window.SelectAboutPage(); window.UpdateLayout();
+                var aboutPicture = new System.Windows.Media.Imaging.RenderTargetBitmap((int)Math.Ceiling(window.ActualWidth), (int)Math.Ceiling(window.ActualHeight), 96, 96, System.Windows.Media.PixelFormats.Pbgra32);
+                aboutPicture.Render(window);
+                var aboutEncoder = new System.Windows.Media.Imaging.PngBitmapEncoder(); aboutEncoder.Frames.Add(System.Windows.Media.Imaging.BitmapFrame.Create(aboutPicture));
+                using var aboutCapture = File.Create(Path.Combine(data, "about-settings.png")); aboutEncoder.Save(aboutCapture);
+                var opened = new List<string>(); var linkFixture = new AboutPage(null, opened.Add);
+                foreach (string name in new[] { "项目主页", "使用说明", "反馈问题", "更新记录", "第三方许可" })
+                    Children<Button>(linkFixture).Single(x => x.Content as string == name).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                Require(opened.Count == 5 && opened.All(x => x.StartsWith("https://github.com/" + ReleaseFeed.Repository + "/", StringComparison.Ordinal) || x == "https://github.com/" + ReleaseFeed.Repository), "AboutHelpLinksUseProjectWithoutLaunchingBrowsers");
             }
             finally { window.Close(); }
         }

@@ -38,7 +38,7 @@
 
 ## 下载与安装 · Install
 
-请前往 [Releases 发布页面](https://github.com/lpd2005/desktop-dock/releases) 下载。当前为 **0.1.0-preview.23 测试版**，尚未发布稳定版本。
+请前往 [Releases 发布页面](https://github.com/lpd2005/desktop-dock/releases) 下载。当前公开版本为 **0.1.0-preview.23 测试版**，尚未发布稳定版本。源码开发版 **0.1.0-preview.24** 新增设置中的“关于”页，尚未发布对应安装包。
 
 支持 **Windows 11 22H2 或更新版本、x64**，目前以主显示器为主要支持范围。运行包自带 .NET，无需额外安装运行时。
 

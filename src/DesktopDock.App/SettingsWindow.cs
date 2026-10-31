@@ -20,6 +20,8 @@ internal sealed class SettingsWindow : Window
     private readonly List<(Button Button, FrameworkElement Page, string Title, string Description)> pages = [];
     private readonly Dictionary<string, ImageSource> iconCache = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<Image> previewIcons = [];
+    private readonly int? systemPageIndex;
+    private readonly int aboutPageIndex;
     private bool refreshingWidgets;
     private static readonly ControlTemplate sliderTemplate = CreateSliderTemplate();
     private static readonly ControlTemplate switchTemplate = CreateSwitchTemplate();
@@ -121,12 +123,18 @@ internal sealed class SettingsWindow : Window
         actions.Children.Add(FeatureUi.Button("＋ 添加应用", AddApplication, true)); actions.Children.Add(FeatureUi.Button("＋ 文件夹", AddFolder)); actions.Children.Add(FeatureUi.Button("移除所选", RemoveSelected)); pinnedSection.Children.Add(actions);
         pinned.Children.Add(Hint("桌面快捷方式可直接拖入 Dock；在 Dock 中拖动排序，拖远松手仅移除入口。最左侧桌面面板和最右侧设置入口会始终保留。"));
         Page("固定应用", "管理常用入口，原文件始终保留在原处。", pinned);
-        if (systemPage is not null) Page("启动与更新", "登录后自动启动，及时获取新版本。", systemPage);
+        if (systemPage is not null)
+        {
+            systemPageIndex = pages.Count;
+            Page("启动与更新", "登录后自动启动，及时获取新版本。", systemPage);
+        }
+        aboutPageIndex = pages.Count;
+        Page("关于", "了解 Desktop Dock，获取帮助与项目信息。", new AboutPage(systemPage is null ? null : SelectSystemPage));
         RefreshItems(); SelectPage(0);
     }
     private static Brush Brush(string value) => (Brush)new BrushConverter().ConvertFromString(value)!;
     private static TextBlock Hint(string text) { var block = FeatureUi.Text(text, 11, FeatureUi.Muted); block.TextWrapping = TextWrapping.Wrap; block.LineHeight = 18; return block; }
-    private static StackPanel Section(Panel parent, string title)
+    internal static StackPanel Section(Panel parent, string title)
     {
         var content = new StackPanel(); var heading = FeatureUi.Text(title, 14); heading.FontWeight = FontWeights.SemiBold; heading.Margin = new(0, 0, 0, 13); content.Children.Add(heading);
         parent.Children.Add(new Border { Child = content, CornerRadius = new(16), Background = Brushes.White, BorderBrush = Brush("#E5EAF2"), BorderThickness = new(1), Padding = new(19, 17, 19, 14), Margin = new(0, 0, 0, 15) });
@@ -138,7 +146,8 @@ internal sealed class SettingsWindow : Window
         for (int i = 0; i < pages.Count; i++) { pages[i].Button.Background = i == index ? Brush("#DCE9FB") : Brushes.Transparent; pages[i].Button.Foreground = i == index ? FeatureUi.Blue : FeatureUi.Ink; }
     }
     internal void SelectPageForChecks(int index) => SelectPage(index);
-    internal void SelectSystemPage() { if (pages.Count > 4) SelectPage(4); }
+    internal void SelectSystemPage() { if (systemPageIndex is int index) SelectPage(index); }
+    internal void SelectAboutPage() => SelectPage(aboutPageIndex);
     internal static ControlTemplate SwitchTemplate => switchTemplate;
     private FrameworkElement BuildPreview()
     {

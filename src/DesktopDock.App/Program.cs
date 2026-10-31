@@ -88,7 +88,8 @@ internal static class Program
                     for (int i = 0; i < 40 && !DesktopIcons.ShellReady; i++) await Task.Delay(500);
                     desktop.Recover(); controller.RepositionAfterStartup();
                 }
-                if (args.Contains("--updates")) controller.OpenUpdates();
+                if (args.Contains("--about")) controller.OpenAbout();
+                else if (args.Contains("--updates")) controller.OpenUpdates();
                 else if (args.Contains("--settings")) controller.OpenSettings();
                 await controller.Start();
                 if (args.Contains("--applications")) controller.ToggleApplications();

@@ -132,6 +132,7 @@ internal sealed partial class Controller : IDisposable
         }
     }
     public void OpenUpdates() { OpenSettings(); settingsWindow?.SelectSystemPage(); }
+    public void OpenAbout() { OpenSettings(); settingsWindow?.SelectAboutPage(); }
     private void ToggleSettings(nint? foregroundAtPress = null)
     {
         if (settingsWindow is { IsVisible: true } && settingsWindow.WindowState != WindowState.Minimized
