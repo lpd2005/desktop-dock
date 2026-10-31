@@ -28,6 +28,16 @@ internal static class TaskbarChecks
                 await Task.Delay(1600);
                 enhancement.TickForChecks();
                 Require(!TaskbarNative.IsPresented((nint)before.Handle), "ActualTaskbarHidden");
+                var workBeforeSuspend = TaskbarNative.Capture()!.Work;
+                enhancement.SetSuspended(true); enhancement.TickForChecks();
+                Require(TaskbarNative.IsPresented((nint)before.Handle) && !enhancement.MotionActive && enhancement.GuardRunning,
+                    "SuspensionPresentsTaskbarAndStopsAnimationWithGuardRetained");
+                await Task.Delay(350); enhancement.TickForChecks();
+                Require(TaskbarNative.IsPresented((nint)before.Handle) && TaskbarNative.Capture()?.Work == workBeforeSuspend,
+                    "SuspendedTicksDoNotHideTaskbarOrChangeWorkArea");
+                enhancement.SetSuspended(false); await Task.Delay(350); enhancement.TickForChecks();
+                Require(enhancement.Active && !TaskbarNative.IsPresented((nint)before.Handle) && TaskbarNative.Capture()?.Work == workBeforeSuspend,
+                    "ResumeRevalidatesAndRestartsExistingTaskbarEnhancement");
                 enhancement.InputForChecks = null;
                 var belowEdge = new Native.Point { X = before.Frame.Left + (before.Frame.Right - before.Frame.Left) / 2,
                     Y = before.Frame.Top + (before.Frame.Bottom - before.Frame.Top) / 2 };
@@ -166,7 +176,8 @@ internal static class TaskbarChecks
                     GlassCpuPercent = (glassProcess.TotalProcessorTime - glassCpu).TotalMilliseconds / watch.Elapsed.TotalMilliseconds / Environment.ProcessorCount * 100,
                     GuardCpuPercent = (guardProcess.TotalProcessorTime - guardCpu).TotalMilliseconds / watch.Elapsed.TotalMilliseconds / Environment.ProcessorCount * 100
                 };
-                enhancement.Stop(); await Task.Delay(400);
+                enhancement.EnvironmentChanged(); await Task.Delay(400);
+                Require(!enhancement.Active && enhancement.Status.Contains("请重新启用"), "EnvironmentChangeStopsEnhancementAndExplainsReenable");
                 var after = TaskbarNative.Capture()!;
                 Require(TaskbarNative.IsPresented((nint)before.Handle) == before.WasVisible, "OriginalVisibilityRestored");
                 Require(after.Work == before.Work, "OriginalWorkAreaRestored");

@@ -92,6 +92,12 @@ Check(visibility.ShouldShow(true, false, 25, interacting: true), "Long interacti
 Check(!visibility.ShouldShow(true, true, 26, atEdge: true, interacting: true), "Task switch suppresses even active interaction");
 Check(!visibility.ShouldShow(true, false, 26.01, atEdge: true), "Task switch resets edge dwell");
 Check(!visibility.ShouldShow(false, false, 27, autoHide: true), "Auto-hide stays hidden without edge input");
+visibility.Summon(28); visibility.ShouldShow(true, false, 28, interacting: true); visibility.Reset();
+Check(!visibility.IsTemporarilyShown && !visibility.ShouldShow(true, false, 28.1), "Lifecycle reset clears temporary reveals");
+Check(!visibility.ShouldShow(false, false, 28.2), "Lifecycle reset requires stable uncovered reveal");
+Check(visibility.ShouldShow(false, false, 28.5), "Stable reveal works after lifecycle reset");
+visibility.ShouldShow(true, false, 29, atEdge: true); visibility.Reset();
+Check(!visibility.ShouldShow(true, false, 29.2, atEdge: true), "Lifecycle reset clears stale edge dwell");
 Check(AppClick.Decide(false, false, false) == AppClickAction.Launch, "Unopened application launches");
 Check(AppClick.Decide(false, false, false, allowLaunch: false) == AppClickAction.Ignore, "Single click never launches an unopened app");
 Check(AppClick.Decide(true, true, false) == AppClickAction.Minimize, "Active app minimizes on repeat click");

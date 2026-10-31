@@ -31,6 +31,7 @@ internal sealed partial class DockWindow : IDisposable
     private readonly DispatcherTimer visibilityTimer;
     private readonly DispatcherTimer labelTimer;
     private readonly AnimationClock animationClock;
+    private readonly DesktopEnvironment environment;
     private readonly ToolTip label;
     private readonly Native.WinEvent windowEvent;
     private readonly List<nint> hooks = [];
@@ -47,6 +48,7 @@ internal sealed partial class DockWindow : IDisposable
     private float scale = 1;
     private int width, height, top, left, separatorBefore = -1;
     private bool tracking, autoHidden, disposed, rendering, eventPending;
+    private bool suspended;
     private bool blocked = true, occlusionDirty = true, cachedOccluded;
     private double lastOcclusionScan;
     private bool appStatesDirty = true;
@@ -92,6 +94,8 @@ internal sealed partial class DockWindow : IDisposable
     public int IconCount => renderer.IconCount;
     public bool AvoidanceHidden => blocked;
     public Action? RestoreTaskbarRequested { get; set; }
+    public Action<DesktopChange>? EnvironmentChanged { get; set; }
+    public Action<bool>? SuspensionChanged { get; set; }
     public bool HighResolutionClock => animationClock.HighResolution;
     public IReadOnlyList<double> FrameIntervals => frameIntervals;
     public bool LaunchWatcherActive => launcher.IsWatching;
@@ -173,6 +177,7 @@ internal sealed partial class DockWindow : IDisposable
         hooks.Add(Native.SetWinEventHook(0x8000, 0x8003, 0, windowEvent, 0, 0, 0));
         hooks.Add(Native.SetWinEventHook(0x0016, 0x0017, 0, windowEvent, 0, 0, 0)); // Minimize start/end.
         hooks.Add(Native.SetWinEventHook(0x000E, 0x000F, 0, windowEvent, 0, 0, 0)); // Shell drag start/end, where supplied.
+        environment = new(source, SetSuspended, change => { Reposition(); EnvironmentChanged?.Invoke(change); });
         Reposition();
         visibilityTimer.Start();
     }
@@ -320,6 +325,7 @@ internal sealed partial class DockWindow : IDisposable
 
     private nint Message(nint hwnd, int msg, nint wparam, nint lparam, ref bool handled)
     {
+        if (suspended && msg is >= 0x0200 and <= 0x020E) { handled = true; return 0; }
         if ((checkingInteraction || isolatingInputForChecks) && !dispatchingCheckMouse && msg is >= 0x0200 and <= 0x020E)
         { handled = true; return 0; }
         int x = unchecked((short)(long)lparam), y = unchecked((short)((long)lparam >> 16));
@@ -422,9 +428,6 @@ internal sealed partial class DockWindow : IDisposable
                 if (pressedIndex >= 0 || dragging || startingDrag) CancelInteraction();
                 break;
             case 0x0205: clicks.Reset(); NoteInteraction(); ShowMenu(HitIndex(x, y)); break;
-            case 0x007E:
-            case 0x001A:
-            case 0x02E0: source.Dispatcher.BeginInvoke(Reposition); break;
             case Native.RecoverMessage: recover(); break;
             case Native.RestoreTaskbarMessage: RestoreTaskbarRequested?.Invoke(); break;
             case 0x0010: quit(); handled = true; break;
@@ -522,7 +525,7 @@ internal sealed partial class DockWindow : IDisposable
 
     public void CheckVisibility()
     {
-        if (disposed) return;
+        if (disposed || suspended) return;
         double now = clock.Elapsed.TotalSeconds;
         bool switching = switchingForChecks ?? ((Native.GetAsyncKeyState(0x12) & 0x8000) != 0
             && ((Native.GetAsyncKeyState(0x11) & 0x8000) == 0 || (Native.GetAsyncKeyState(0x09) & 0x8000) != 0));
@@ -605,6 +608,23 @@ internal sealed partial class DockWindow : IDisposable
     }
     private void NoteInteraction() => visibility.Interact(clock.Elapsed.TotalSeconds);
     public void RefreshOcclusion() { occlusionDirty = appStatesDirty = true; CheckVisibility(); }
+
+    private void SetSuspended(bool value)
+    {
+        if (disposed || suspended == value) return;
+        suspended = value;
+        if (value)
+        {
+            blocked = true; visibilityTimer.Stop(); visibility.Reset();
+            CancelInteraction(); StopRendering(); motion.Request(false, true);
+            hover.Reset(0); renderer.ResetPressFeedback(); hoveredIndex = -1; tracking = false;
+            labelTimer.Stop(); label.IsOpen = false; externalDrop = systemDragging = syntheticHover = false; insertion = -1;
+            shellDrag.Reset();
+            if (menuOpen) Native.EndMenu();
+        }
+        else { occlusionDirty = appStatesDirty = true; visibilityTimer.Start(); CheckVisibility(); }
+        SuspensionChanged?.Invoke(value);
+    }
 
     private WindowBounds RestDockArea
     {
@@ -755,7 +775,7 @@ internal sealed partial class DockWindow : IDisposable
     }
     private void PreviewDrop(Native.Point point, bool allowed)
     {
-        if (disposed) return;
+        if (disposed || suspended) return;
         CloseWindowPreview();
         NoteInteraction();
         Native.ScreenToClient(Handle, ref point);
@@ -765,7 +785,7 @@ internal sealed partial class DockWindow : IDisposable
     }
     private int AddDroppedFiles(IReadOnlyList<string> paths, Native.Point point)
     {
-        if (disposed) return 0;
+        if (disposed || suspended) return 0;
         Native.ScreenToClient(Handle, ref point);
         int index = DockReorder.Insertion(RestGeometry, settings.Items.Count, point.X / scale, start: 1), added = 0;
         foreach (string path in paths)
@@ -803,6 +823,7 @@ internal sealed partial class DockWindow : IDisposable
     public void Dispose()
     {
         if (disposed) return;
+        environment.Dispose();
         CancelInteraction(); disposed = true; StopRendering(); visibilityTimer.Stop(); labelTimer.Stop(); label.IsOpen = false;
         foreach (nint hook in hooks) if (hook != 0) Native.UnhookWinEvent(hook);
         if (menuOpen) Native.EndMenu();

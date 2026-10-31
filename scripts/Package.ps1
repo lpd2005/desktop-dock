@@ -39,7 +39,7 @@ foreach ($taskNotice in @('LICENSE.txt','ThirdPartyNotices.txt')) {
         Copy-Item -LiteralPath $taskSourceNotice -Destination (Join-Path $taskOutput ("licenses/Microsoft.NET." + $taskNotice))
     }
 }
-$taskForbidden = Get-ChildItem -LiteralPath $taskOutput -Recurse -File | Where-Object { $_.Name -in @('settings.json','desktop-state.json','taskbar-state.json','last-error.txt','smoke-report.json','feature-report.json','distribution-report.json','window-preview-report.json','update-state.json','weather-cache.json') -or $_.Extension -in @('.log','.dmp','.etl','.pfx','.pem') }
+$taskForbidden = Get-ChildItem -LiteralPath $taskOutput -Recurse -File | Where-Object { $_.Name -in @('settings.json','desktop-state.json','taskbar-state.json','last-error.txt','smoke-report.json','feature-report.json','distribution-report.json','environment-report.json','window-preview-report.json','update-state.json','weather-cache.json') -or $_.Extension -in @('.log','.dmp','.etl','.pfx','.pem') }
 if ($taskForbidden -or (Get-ChildItem -LiteralPath $taskOutput -Recurse -File | Where-Object { $_.Name -like 'settings.json.*' })) { throw 'Package contains local runtime data.' }
 $taskZip = "$taskOutput.zip"
 Compress-Archive -Path (Join-Path $taskOutput '*') -DestinationPath $taskZip -Force

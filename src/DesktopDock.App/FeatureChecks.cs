@@ -17,16 +17,19 @@ internal static class FeatureChecks
     private sealed class WeatherFixture : HttpMessageHandler
     {
         public readonly List<Uri> Requests = [];
-        public bool Offline;
+        public bool Offline, WaitUntilCanceled;
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             Requests.Add(request.RequestUri!);
+            if (WaitUntilCanceled) return CanceledResponse(cancellationToken);
             if (Offline) throw new HttpRequestException("Fixture offline.");
             string json = request.RequestUri!.Host.StartsWith("geocoding-", StringComparison.Ordinal)
                 ? """{"results":[{"name":"Example City","admin1":"Example Region","latitude":34.67,"longitude":112.43,"population":1390000}]}"""
                 : """{"current":{"temperature_2m":18.4,"apparent_temperature":17.1,"relative_humidity_2m":54,"wind_speed_10m":8.2,"weather_code":2,"is_day":1},"daily":{"temperature_2m_max":[23.1],"temperature_2m_min":[12.5]}}""";
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(json, Encoding.UTF8, "application/json") });
         }
+        private static async Task<HttpResponseMessage> CanceledResponse(CancellationToken token)
+        { await Task.Delay(Timeout.Infinite, token); throw new InvalidOperationException("Fixture must be canceled."); }
     }
     private static IEnumerable<T> Children<T>(DependencyObject root) where T : DependencyObject
     {
@@ -139,6 +142,10 @@ internal static class FeatureChecks
             Require(panel.Open && panel.Opacity == 1, "PanelReversesDismissWithoutLateHide");
             Require(HasTransparentSurface(panel), "PanelHasTransparentPixelsWithoutAcrylicBackdrop");
             await Inspect(panel);
+            var interruptedPresentation = panel.Present(); panel.DismissImmediately(); await interruptedPresentation;
+            Require(!panel.IsVisible && !panel.Open, "EnvironmentDismissCancelsPendingPanelPresentation");
+            await panel.Present(); await Task.Delay(200);
+            Require(panel.Open && panel.Opacity == 1, "PanelCanReopenAfterEnvironmentDismissal");
             panel.Dismiss(); await WaitFor(() => !panel.IsVisible, "PanelToggleCanClose");
         }
         finally { panel.DisposeWindow(); }
@@ -175,6 +182,24 @@ internal static class FeatureChecks
             var work = System.Windows.Forms.Screen.PrimaryScreen!.WorkingArea; Native.GetWindowRect(clock.Handle, out var bounds);
             Require(bounds.Left >= work.Left && bounds.Top >= work.Top && bounds.Right <= work.Right + 2 && bounds.Bottom <= work.Bottom + 2, "DraggedWidgetIsClampedInsideWorkArea");
             Require(settings.Widgets.Positions.ContainsKey("clock"), "WidgetPlacementPersistsAfterMove");
+            var placement = windows.Select(x => (x.Left, x.Top)).ToArray();
+            int requestsBeforePause = fixtureHttp.Requests.Count, savesBeforePause = saves;
+            widgets.SetSuspended(true); widgets.SetSuspended(true); await widgets.RefreshWeather();
+            Require(windows.All(x => !x.IsVisible) && !widgets.ClockTickingForChecks && fixtureHttp.Requests.Count == requestsBeforePause,
+                "SuspendedWidgetsHideAndStopClockAndWeatherWork");
+            widgets.Reposition(); widgets.RestackForChecks();
+            Require(windows.All(x => !x.IsVisible), "RestackingCannotRevealSuspendedWidgets");
+            widgets.SetSuspended(false);
+            Require(widgets.WindowsForChecks.SequenceEqual(windows) && windows.All(x => x.IsVisible) && widgets.ClockTickingForChecks
+                && windows.Select((x, i) => Math.Abs(x.Left - placement[i].Left) < .01 && Math.Abs(x.Top - placement[i].Top) < .01).All(x => x), "ResumeReusesWidgetWindowsAndPositions");
+            Require(fixtureHttp.Requests.Count == requestsBeforePause && saves == savesBeforePause, "ResumeReusesFreshWeatherAndDoesNotRewriteConfiguration");
+            fixtureHttp.WaitUntilCanceled = true;
+            var pendingWeather = widgets.RefreshWeather();
+            Require(widgets.WeatherFetchingForChecks, "WeatherRequestIsPendingBeforeSuspend");
+            widgets.SetSuspended(true); await pendingWeather;
+            Require(!widgets.WeatherFetchingForChecks && Children<TextBlock>(weather).Any(x => x.Text == "18°"), "SuspendCancelsPendingWeatherWithoutReplacingLastValue");
+            fixtureHttp.WaitUntilCanceled = false; widgets.SetSuspended(false);
+            Require(!Children<TextBlock>(weather).Any(x => x.Text == "正在更新 · Open-Meteo"), "ResumeClearsCanceledWeatherProgressStatus");
             fixtureHttp.Offline = true; await widgets.RefreshWeather();
             Require(Children<TextBlock>(weather).Any(x => x.Text.Contains("上次更新")) && Children<TextBlock>(weather).Any(x => x.Text == "18°"), "OfflineWeatherRetainsLastRealValue");
             int requestsBeforeRemove = fixtureHttp.Requests.Count;

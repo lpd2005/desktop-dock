@@ -15,7 +15,7 @@ internal sealed class TaskbarEnhancement : IDisposable
     private EventWaitHandle? guardStop;
     private Process? guard;
     private TaskbarMotion? motion;
-    private bool autoHide, disposed;
+    private bool autoHide, disposed, suspended;
     private double lastValidation;
     public string Status { get; private set; } = "任务栏增强未启用";
     public string GlassStatus => glass.Status;
@@ -107,11 +107,12 @@ internal sealed class TaskbarEnhancement : IDisposable
         Status = state.Snapshot.NativeAutoHide ? "顶部任务栏 · 使用系统已有的自动隐藏"
             : autoHide ? "顶部任务栏 · 顶边停留唤出，移开后隐藏" : "顶部任务栏 · 保持显示";
         if (autoHide && !state.Snapshot.CanReleaseTop) Status += "（保留其他程序预留的工作区）";
-        timer.Start(); Tick(); Changed();
+        if (!suspended) { timer.Start(); Tick(); } else motion?.Request(true, true);
+        Changed();
     }
     private void Tick()
     {
-        if (state is null) return;
+        if (state is null || suspended) return;
         double now = clock.Elapsed.TotalSeconds;
         if (now - lastValidation >= 1)
         {
@@ -150,10 +151,26 @@ internal sealed class TaskbarEnhancement : IDisposable
     }
     public void Reveal()
     {
+        if (suspended) return;
         visibility.Reveal(clock.Elapsed.TotalSeconds);
         if (motion is not null) motion.Request(true);
     }
-    public void Stop()
+    internal void SetSuspended(bool value)
+    {
+        if (disposed || suspended == value) return;
+        suspended = value; visibility = new();
+        if (value) { timer.Stop(); motion?.Request(true, true); }
+        else if (state is not null) { lastValidation = double.NegativeInfinity; timer.Start(); Tick(); }
+    }
+    internal void EnvironmentChanged()
+    {
+        if (!Active) return;
+        bool restored = Stop();
+        Status = restored ? "显示环境或资源管理器已变化；已恢复任务栏，请重新启用增强"
+            : "显示环境或资源管理器已变化；恢复记录已保留，请使用“恢复任务栏”重试";
+        Changed();
+    }
+    public bool Stop()
     {
         timer.Stop();
         motion?.Dispose(); motion = null;
@@ -163,6 +180,7 @@ internal sealed class TaskbarEnhancement : IDisposable
         guard?.Dispose(); guard = null; state = null;
         Status = restored ? "任务栏增强未启用，已恢复原状" : "恢复记录已保留，请使用“恢复任务栏”重试";
         Changed();
+        return restored;
     }
     private void Changed() => StatusChanged?.Invoke();
     internal void TickForChecks() => Tick();

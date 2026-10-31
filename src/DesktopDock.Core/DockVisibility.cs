@@ -11,6 +11,12 @@ public sealed class DockVisibility
     private bool summoned;
     public bool IsTemporarilyShown { get; private set; }
 
+    public void Reset()
+    {
+        lastInteraction = double.NegativeInfinity; edgeSince = clearSince = null;
+        summoned = IsTemporarilyShown = false;
+    }
+
     public void Summon(double now) { summoned = true; lastInteraction = now; }
     public void Interact(double now) { if (summoned) lastInteraction = now; }
     public bool ShouldShow(bool covered, bool switching, double now, bool autoHide = false,

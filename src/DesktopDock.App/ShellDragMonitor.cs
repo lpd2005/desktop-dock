@@ -12,6 +12,7 @@ internal sealed class ShellDragMonitor
     private bool shellCaptureStarted;
     internal Func<ShellDragInput>? InputForChecks { get; set; }
     public bool Active => intent.Active;
+    public void Reset() { shellCaptureStarted = false; intent.Update(false, false, false, false, true, 0, 0); }
     public void CaptureStarted(nint window) { if (IsShellSource(window)) shellCaptureStarted = true; }
 
     public bool Update(bool notified, bool switching, float scale, WindowBounds dockArea)

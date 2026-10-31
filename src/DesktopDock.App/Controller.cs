@@ -82,6 +82,17 @@ internal sealed partial class Controller : IDisposable
         menu.Items.Add(new Forms.ToolStripSeparator());
         menu.Items.Add("退出并恢复桌面", null, (_, _) => application.Dispatcher.Invoke(Quit));
         tray.ContextMenuStrip = menu;
+        dock.EnvironmentChanged = change =>
+        {
+            if ((change & (DesktopChange.Display | DesktopChange.Dpi | DesktopChange.Shell)) != 0) taskbar.EnvironmentChanged();
+            desktopPanel?.DismissImmediately(); widgets.Reposition();
+            if ((change & DesktopChange.Shell) != 0 && !preview && !recoveryRequired) desktop.Apply(settings.HideDesktopIcons);
+        };
+        dock.SuspensionChanged = value =>
+        {
+            if (value) desktopPanel?.DismissImmediately();
+            widgets.SetSuspended(value); taskbar.SetSuspended(value);
+        };
     }
 
     public async Task Start()

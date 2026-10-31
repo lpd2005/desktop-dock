@@ -126,6 +126,11 @@ internal sealed class DesktopPanel : Window
         hiding = true; int version = ++transition;
         FeatureUi.Fade(this, false, settings.ReducedMotion, () => { if (version == transition) { Hide(); hiding = false; changed(); } });
     }
+    internal void DismissImmediately()
+    {
+        transition++; generation++; hiding = true;
+        BeginAnimation(OpacityProperty, null); Hide(); hiding = false; changed();
+    }
     public async Task Reload()
     {
         int version = ++generation;

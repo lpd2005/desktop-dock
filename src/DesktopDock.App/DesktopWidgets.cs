@@ -67,7 +67,7 @@ internal sealed class DesktopWidgets : IDisposable
     private DateOnly date = DateOnly.MinValue;
     private WeatherSnapshot? lastWeather;
     private bool weatherFailed;
-    private bool fetching, disposed, restackPending;
+    private bool fetching, disposed, restackPending, suspended;
     private int weatherGeneration;
     internal IReadOnlyCollection<WidgetWindow> WindowsForChecks => windows.Values;
     internal bool WeatherFetchingForChecks => fetching;
@@ -87,7 +87,6 @@ internal sealed class DesktopWidgets : IDisposable
             dispatcher.BeginInvoke(() => { restackPending = false; if (!disposed) Restack(); }, DispatcherPriority.Background);
         };
         foregroundHook = Native.SetWinEventHook(3, 3, 0, foregroundEvent, 0, 0, 0);
-        Microsoft.Win32.SystemEvents.DisplaySettingsChanged += DisplayChanged;
     }
     public void Apply()
     {
@@ -125,10 +124,10 @@ internal sealed class DesktopWidgets : IDisposable
             if (lastWeather?.City == options.City) DisplayWeather(lastWeather, stale: weatherFailed || !WeatherFresh());
         }
         date = DateOnly.MinValue; RefreshTime();
-        foreach (var window in windows.Values) { Place(window); window.Show(); }
+        foreach (var window in windows.Values) { Place(window); if (!suspended) window.Show(); }
         Restack();
-        if (options.Clock) clockTimer.Start(); else clockTimer.Stop();
-        if (options.Weather) { weatherTimer.Start(); if (!WeatherFresh()) _ = RefreshWeather(); } else weatherTimer.Stop();
+        if (options.Clock && !suspended) clockTimer.Start(); else clockTimer.Stop();
+        if (options.Weather && !suspended) { weatherTimer.Start(); if (!WeatherFresh()) _ = RefreshWeather(); } else weatherTimer.Stop();
     }
     private static Button SmallButton(string text, Action action) { var button = TransparentUi.Button(text, action); button.Padding = new(5, 2, 5, 2); button.FontSize = 10; return button; }
     private WidgetWindow Create(string kind, string title, double height)
@@ -142,7 +141,33 @@ internal sealed class DesktopWidgets : IDisposable
         else if (kind == "weather") settings.Widgets.Weather = false;
         save(); Apply();
     }
-    private void DisplayChanged(object? sender, EventArgs e) => dispatcher.BeginInvoke(() => { if (!disposed) { foreach (var window in windows.Values) Place(window); Restack(); } });
+    internal void Reposition()
+    {
+        if (disposed) return;
+        foreach (var window in windows.Values) Place(window); Restack();
+    }
+    internal void SetSuspended(bool value)
+    {
+        if (disposed || suspended == value) return;
+        suspended = value;
+        if (value)
+        {
+            clockTimer.Stop(); weatherTimer.Stop(); weatherGeneration++; fetching = false;
+            cancellation.Cancel(); cancellation.Dispose(); cancellation = new();
+            foreach (var window in windows.Values) window.Hide();
+        }
+        else
+        {
+            RefreshTime(); Reposition();
+            foreach (var window in windows.Values) window.Show(); Restack();
+            if (windows.ContainsKey("clock")) clockTimer.Start();
+            if (windows.ContainsKey("weather"))
+            {
+                if (lastWeather?.City == settings.Widgets.City) DisplayWeather(lastWeather, stale: weatherFailed || !WeatherFresh());
+                weatherTimer.Start(); if (!WeatherFresh()) _ = RefreshWeather();
+            }
+        }
+    }
     private void Place(WidgetWindow window)
     {
         var work = System.Windows.Forms.Screen.PrimaryScreen!.WorkingArea;
@@ -169,7 +194,7 @@ internal sealed class DesktopWidgets : IDisposable
     }
     internal async Task RefreshWeather()
     {
-        if (fetching || disposed || !settings.Widgets.Weather || weatherStatus is null) return;
+        if (fetching || disposed || suspended || !settings.Widgets.Weather || weatherStatus is null) return;
         if (!network) { if (lastWeather is null) { weatherDescription!.Text = "预览模式 · 天气未联网"; weatherStatus.Text = "Open-Meteo"; } return; }
         fetching = true; int version = weatherGeneration; string city = settings.Widgets.City; var token = cancellation.Token;
         weatherStatus.Text = "正在更新 · Open-Meteo";
@@ -206,7 +231,7 @@ internal sealed class DesktopWidgets : IDisposable
     }
     private void Restack()
     {
-        if (disposed || windows.Count == 0) return;
+        if (disposed || suspended || windows.Count == 0) return;
         nint after = 0;
         Native.EnumWindows((window, _) =>
         {
@@ -233,7 +258,6 @@ internal sealed class DesktopWidgets : IDisposable
         if (disposed) return; disposed = true; weatherGeneration++;
         clockTimer.Stop(); weatherTimer.Stop(); cancellation.Cancel(); cancellation.Dispose(); weatherService.Dispose();
         if (foregroundHook != 0) Native.UnhookWinEvent(foregroundHook);
-        Microsoft.Win32.SystemEvents.DisplaySettingsChanged -= DisplayChanged;
         foreach (var window in windows.Values) window.Close(); windows.Clear();
     }
 }

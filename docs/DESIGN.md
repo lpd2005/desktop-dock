@@ -1,6 +1,18 @@
 # Dock 交互与当前实现
 
-当前源码以 0.1.0-preview.25 为准，公开测试版仍为 0.1.0-preview.23。preview.2 的启动动效和窗口位置调整已按用户要求移除。
+当前源码以 0.1.0-preview.26 为准，公开测试版仍为 0.1.0-preview.23。preview.2 的启动动效和窗口位置调整已按用户要求移除。
+
+## 会话、电源与显示环境
+
+[DesktopEnvironment.cs](../src/DesktopDock.App/DesktopEnvironment.cs) 复用 Dock 已有的 HWND 接收当前会话通知、系统电源通知和显示消息，不创建新的常驻窗口或进程。注册会话通知时若系统服务尚未就绪，只作有限次数的延后重试；正常空闲时合并消息的计时器保持停止。
+
+锁定、休眠和会话断开分别记录状态，解锁不能解除仍在休眠的暂停，电源恢复也不能覆盖会话锁定或断开。暂停时停止 Dock 可见性与动画计时器，立即关闭预览并释放缩略图，取消拖拽、按压、右键菜单和过期的底边召回。恢复先完成重定位，再开放输入，不重放上次点击或拖拽。
+
+显示、DPI、工作区和 TaskbarCreated 消息按 250 ms 安静间隔合并。显示 / DPI / Shell 变化立即收起旧输入区域；普通工作区消息只安排重定位。任务栏增强自身释放工作区产生的消息不会被当成显示器变化而停用增强。小组件通过同一入口重定位，暂停时停止计时与在途天气请求，恢复时保留位置和有效缓存。
+
+顶部任务栏增强暂停时保持任务栏可见、停止过渡，已有守护进程继续保护异常退出；恢复时先核对当前任务栏身份与工作区。显示 / DPI / Explorer 变化按既有保护原则停止增强，需用户重新启用。此轮原生消息测试与实际任务栏测试不等同于真实登录、休眠或硬件热插拔验收。
+
+接口依据：[会话状态通知](https://learn.microsoft.com/en-us/windows/win32/termserv/wm-wtssession-change)、[会话注册与注销](https://learn.microsoft.com/en-us/windows/win32/api/wtsapi32/nf-wtsapi32-wtsregistersessionnotification)、[系统电源通知](https://learn.microsoft.com/en-us/windows/win32/power/wm-powerbroadcast)、[任务栏创建通知](https://learn.microsoft.com/en-us/windows/win32/shell/taskbar#taskbar-creation-notification)。
 
 ## 配置与自启的错误恢复
 

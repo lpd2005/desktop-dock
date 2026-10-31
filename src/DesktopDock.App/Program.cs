@@ -13,7 +13,7 @@ internal static class Program
         string data = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "DesktopDock");
         int dataIndex = Array.IndexOf(args, "--data-dir");
         if (dataIndex >= 0 && dataIndex + 1 < args.Length) data = Path.GetFullPath(args[dataIndex + 1]);
-        bool automated = args.Any(x => x is "--smoke-test" or "--drag-test" or "--click-hover-test" or "--browser-window-test" or "--feature-test" or "--window-preview-test" or "--distribution-test");
+        bool automated = args.Any(x => x is "--smoke-test" or "--drag-test" or "--click-hover-test" or "--browser-window-test" or "--feature-test" or "--window-preview-test" or "--distribution-test" or "--environment-test");
         bool preview = args.Contains("--preview") || automated;
         Directory.CreateDirectory(data);
         if (args.Contains("--taskbar-guard")) return TaskbarRecovery.RunGuard(args, data);
@@ -100,6 +100,7 @@ internal static class Program
                 if (args.Contains("--feature-test")) await controller.RunFeatureTest(args.Contains("--inspect-features"));
                 if (args.Contains("--window-preview-test")) await controller.RunWindowPreviewTest(args.Contains("--inspect-previews"));
                 if (args.Contains("--distribution-test")) await controller.RunDistributionTest();
+                if (args.Contains("--environment-test")) await controller.RunEnvironmentTest();
             };
             return application.Run();
         }
@@ -107,7 +108,7 @@ internal static class Program
         {
             desktop.Restore();
             File.WriteAllText(Path.Combine(data, "last-error.txt"), e.ToString());
-            if (!args.Contains("--smoke-test") && !args.Contains("--click-hover-test") && !args.Contains("--browser-window-test") && !args.Contains("--feature-test") && !args.Contains("--window-preview-test") && !args.Contains("--distribution-test")) System.Windows.MessageBox.Show("Dock 无法启动。桌面已尝试恢复。诊断信息保存在本机应用数据目录。", "Desktop Dock");
+            if (!automated) System.Windows.MessageBox.Show("Dock 无法启动。桌面已尝试恢复。诊断信息保存在本机应用数据目录。", "Desktop Dock");
             return 1;
         }
         finally
