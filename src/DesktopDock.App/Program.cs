@@ -14,6 +14,8 @@ internal static class Program
         int dataIndex = Array.IndexOf(args, "--data-dir");
         if (dataIndex >= 0 && dataIndex + 1 < args.Length) data = Path.GetFullPath(args[dataIndex + 1]);
         bool automated = args.Any(x => x is "--smoke-test" or "--drag-test" or "--click-hover-test" or "--browser-window-test" or "--feature-test" or "--window-preview-test" or "--distribution-test" or "--environment-test");
+        bool performance = args.Contains("--performance-run");
+        automated |= performance;
         bool preview = args.Contains("--preview") || automated;
         Directory.CreateDirectory(data);
         if (args.Contains("--taskbar-guard")) return TaskbarRecovery.RunGuard(args, data);
@@ -32,7 +34,9 @@ internal static class Program
                 Thread.Sleep(Math.Clamp(delay, 0, 2000));
             int grantIndex = Array.IndexOf(args, "--allow-foreground");
             uint parent = grantIndex >= 0 && grantIndex + 1 < args.Length && uint.TryParse(args[grantIndex + 1], out uint parsed) ? parsed : 0;
-            return RegressionProbe.Run(args[probeIndex + 1], data, parent);
+            int lifetimeIndex = Array.IndexOf(args, "--probe-lifetime-seconds");
+            int? lifetime = lifetimeIndex >= 0 && lifetimeIndex + 1 < args.Length && int.TryParse(args[lifetimeIndex + 1], out int seconds) ? Math.Clamp(seconds, 1, 7800) : null;
+            return RegressionProbe.Run(args[probeIndex + 1], data, parent, lifetime);
         }
         using var desktop = new DesktopIcons(data);
         if (args.Contains("--quit"))
@@ -71,6 +75,12 @@ internal static class Program
             var options = new Native.QueueOptions { Size = Marshal.SizeOf<Native.QueueOptions>(), ThreadType = 2, ApartmentType = 2 };
             Marshal.ThrowExceptionForHR(Native.CreateDispatcherQueueController(options, out queue));
             var application = new System.Windows.Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
+            PerformanceOptions? performanceOptions = null;
+            if (performance)
+            {
+                if (dataIndex < 0) throw new ArgumentException("Performance runs require an explicit new data directory.");
+                performanceOptions = PerformanceOptions.Parse(args); performanceOptions.Prepare(data);
+            }
             application.DispatcherUnhandledException += (_, e) =>
             {
                 desktop.Restore();
@@ -101,6 +111,7 @@ internal static class Program
                 if (args.Contains("--window-preview-test")) await controller.RunWindowPreviewTest(args.Contains("--inspect-previews"));
                 if (args.Contains("--distribution-test")) await controller.RunDistributionTest();
                 if (args.Contains("--environment-test")) await controller.RunEnvironmentTest();
+                if (performanceOptions is not null) await controller.RunPerformance(performanceOptions);
             };
             return application.Run();
         }

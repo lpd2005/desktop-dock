@@ -40,6 +40,7 @@ internal sealed partial class DockWindow : IDisposable
     private readonly Stopwatch clock = Stopwatch.StartNew();
     private readonly List<double> frameIntervals = [];
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte[]> iconCache = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, ImageSource> settingsIcons = new(StringComparer.OrdinalIgnoreCase);
     private DockGeometry geometry = new([], 0, 48);
     private DockGeometry? restGeometry;
     private (int Count, double IconSize, double Magnification, double Width, int Separator) restGeometryKey;
@@ -215,6 +216,17 @@ internal sealed partial class DockWindow : IDisposable
                 CheckVisibility();
             }
         }
+    }
+
+    internal ImageSource SettingsIcon(DockItem item)
+    {
+        if (!settingsIcons.TryGetValue(item.Target, out var image))
+        {
+            if (settingsIcons.Count >= 64) settingsIcons.Clear();
+            image = IconService.Bitmap(iconCache.GetOrAdd(item.Target, _ => IconService.Load(item)));
+            settingsIcons[item.Target] = image;
+        }
+        return image;
     }
 
     public void ApplySettings()
@@ -539,6 +551,7 @@ internal sealed partial class DockWindow : IDisposable
         }
         if (occlusionDirty || now - lastOcclusionScan >= 1)
         {
+            occlusionScans++;
             cachedOccluded = occlusion.Covered(RestDockArea);
             occlusionDirty = false; lastOcclusionScan = now;
         }

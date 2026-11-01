@@ -172,7 +172,7 @@ internal sealed partial class Controller : IDisposable
             StartupRegistration? startup = !preview && string.Equals(Path.GetFileName(Environment.ProcessPath), "DesktopDock.exe", StringComparison.OrdinalIgnoreCase)
                 ? new(Environment.ProcessPath!) : null;
             settingsWindow = new(settings, Apply, () => { Save(); _ = dock.LoadIcons(); }, Quit, taskbar,
-                new SystemSettingsPage(settings, updates, startup, Save, Quit));
+                new SystemSettingsPage(settings, updates, startup, Save, Quit), iconProvider: dock.SettingsIcon);
             settingsWindow.Closed += (_, _) => { settingsWindow = null; dock.RefreshOcclusion(); };
             settingsWindow.SetStorageNotice(storageMessage, recoveryRequired ? "确认恢复并保存" : "重试保存", recoveryRequired ? RecoverSettings : RetrySave);
             settingsWindow.Show();

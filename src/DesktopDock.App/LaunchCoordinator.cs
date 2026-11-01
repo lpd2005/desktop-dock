@@ -25,12 +25,12 @@ internal sealed class LaunchCoordinator : IDisposable
         private readonly Dictionary<uint, string?> names = [];
         private readonly Dictionary<uint, string?> paths = [];
         private readonly Dictionary<nint, string?> appIds = [];
-        public string? Name(uint pid) => Read(names, pid, () => ProcessValue(pid, false));
-        public string? Path(uint pid) => Read(paths, pid, () => ProcessValue(pid, true));
-        public string? AppId(nint window) => Read(appIds, window, () => readAppId(window));
-        private static string? Read<T>(Dictionary<T, string?> cache, T key, Func<string?> read) where T : notnull
+        public string? Name(uint pid) => Read(names, pid, static value => ProcessValue(value, false));
+        public string? Path(uint pid) => Read(paths, pid, static value => ProcessValue(value, true));
+        public string? AppId(nint window) => Read(appIds, window, readAppId);
+        private static string? Read<T>(Dictionary<T, string?> cache, T key, Func<T, string?> read) where T : notnull
         {
-            if (!cache.TryGetValue(key, out var value)) cache[key] = value = read();
+            if (!cache.TryGetValue(key, out var value)) cache[key] = value = read(key);
             return value;
         }
     }
@@ -229,4 +229,22 @@ internal sealed class LaunchCoordinator : IDisposable
     }
 
     public void Dispose() => StopWatch();
+
+    internal static Dictionary<string, bool> CheckIdentityCache()
+    {
+        int calls = 0; var snapshot = new MatchSnapshot(_ => { calls++; return "Example.App"; });
+        uint pid = (uint)Environment.ProcessId;
+        _ = snapshot.Name(pid); _ = snapshot.Path(pid); _ = snapshot.AppId(1);
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        for (int i = 0; i < 5000; i++) { _ = snapshot.Name(pid); _ = snapshot.Path(pid); _ = snapshot.AppId(1); }
+        long bytes = GC.GetAllocatedBytesForCurrentThread() - before;
+        var next = new MatchSnapshot(_ => { calls++; return null; });
+        _ = next.AppId(1); _ = next.AppId(1);
+        return new()
+        {
+            ["IdentityCacheHitsDoNotAllocateClosures"] = bytes == 0,
+            ["IdentityReadsAreSharedWithinEachSnapshot"] = calls == 2,
+            ["NewSnapshotRefreshesAndCachesUnavailableIdentity"] = next.AppId(1) is null && calls == 2
+        };
+    }
 }

@@ -14,7 +14,7 @@ namespace DesktopDock.App;
 // Separate process: same-thread HTTRANSPARENT must not make a broken regression pass.
 internal static class RegressionProbe
 {
-    public static int Run(string mode, string data, uint allowForegroundProcess = 0)
+    public static int Run(string mode, string data, uint allowForegroundProcess = 0, int? lifetimeSeconds = null)
     {
         var app = new System.Windows.Application();
         var screen = Forms.Screen.PrimaryScreen!;
@@ -91,13 +91,13 @@ internal static class RegressionProbe
             WriteShared(Path.Combine(data, "ready.json"), JsonSerializer.Serialize(new { Mode = appliedMode, Ready = true, WindowHandle = (long)new WindowInteropHelper(window).Handle }));
         };
         modeTimer.Start();
-        var timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(mode == "preview" ? 900 : 90) };
+        var timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(lifetimeSeconds ?? (mode == "preview" ? 900 : 90)) };
         timer.Tick += (_, _) => { timer.Stop(); modeTimer.Stop(); window.Close(); };
         timer.Start();
         return app.Run(window);
     }
 
-    public static Process Start(string mode, string data, string? executable = null)
+    public static Process Start(string mode, string data, string? executable = null, int? lifetimeSeconds = null)
     {
         Directory.CreateDirectory(data);
         var start = new ProcessStartInfo(executable ?? Environment.ProcessPath!) { UseShellExecute = false, CreateNoWindow = true };
@@ -106,6 +106,7 @@ internal static class RegressionProbe
         start.ArgumentList.Add("--probe-window"); start.ArgumentList.Add(mode);
         start.ArgumentList.Add("--allow-foreground"); start.ArgumentList.Add(Environment.ProcessId.ToString());
         start.ArgumentList.Add("--data-dir"); start.ArgumentList.Add(data);
+        if (lifetimeSeconds is { } lifetime) { start.ArgumentList.Add("--probe-lifetime-seconds"); start.ArgumentList.Add(lifetime.ToString()); }
         return Process.Start(start)!;
     }
 

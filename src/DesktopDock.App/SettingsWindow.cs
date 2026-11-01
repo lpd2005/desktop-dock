@@ -20,6 +20,7 @@ internal sealed class SettingsWindow : Window
     private readonly List<(Button Button, FrameworkElement Page, string Title, string Description)> pages = [];
     private readonly Dictionary<string, ImageSource> iconCache = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<Image> previewIcons = [];
+    private readonly Func<DockItem, ImageSource>? iconProvider;
     private readonly Border storageNotice = new() { Visibility = Visibility.Collapsed, CornerRadius = new(12), Background = Brush("#FFF2D9"), Padding = new(13), Margin = new(0, 0, 0, 14) };
     private bool storagePending;
     private readonly int? systemPageIndex;
@@ -29,9 +30,10 @@ internal sealed class SettingsWindow : Window
     private static readonly ControlTemplate switchTemplate = CreateSwitchTemplate();
     private sealed record PinnedView(string Name, ImageSource Icon);
 
-    public SettingsWindow(DockSettings settings, Action apply, Action reload, Action quit, TaskbarEnhancement taskbar, FrameworkElement? systemPage = null)
+    public SettingsWindow(DockSettings settings, Action apply, Action reload, Action quit, TaskbarEnhancement taskbar, FrameworkElement? systemPage = null, Func<DockItem, ImageSource>? iconProvider = null)
     {
         this.settings = settings; this.apply = apply; this.reload = reload;
+        this.iconProvider = iconProvider;
         Title = "Desktop Dock · 设置"; Icon = AppBrand.Image(); ShowInTaskbar = false; WindowStyle = WindowStyle.ToolWindow;
         Width = 960; Height = 750; MinWidth = 760; MinHeight = 560; WindowStartupLocation = WindowStartupLocation.CenterScreen;
         Background = Brush("#F5F7FB"); Foreground = FeatureUi.Ink; FontFamily = new("Segoe UI Variable Display, Microsoft YaHei UI");
@@ -173,7 +175,7 @@ internal sealed class SettingsWindow : Window
         foreach (var (target, active) in new[] { ("dock:apps", -1), ("dock:settings", 1), ("ms-settings:", 0) })
         {
             var item = new StackPanel { Margin = new(13, 0, 13, 0), VerticalAlignment = VerticalAlignment.Center };
-            var icon = new Image { Source = IconService.Bitmap(IconService.Load(new("Preview", target))), Width = 38, Height = 38 }; previewIcons.Add(icon); item.Children.Add(icon);
+            var icon = new Image { Source = ReadIcon(new("Preview", target)), Width = 38, Height = 38 }; previewIcons.Add(icon); item.Children.Add(icon);
             item.Children.Add(new Border { Width = active == 1 ? 22 : 10, Height = 3, CornerRadius = new(1.5), Margin = new(0, 6, 0, 0), Background = active == 1 ? FeatureUi.Blue : Brushes.White, Opacity = active < 0 ? 0 : 1 }); dock.Children.Add(item);
         }
         DockPanel.SetDock(dock, Dock.Top); panel.Children.Add(dock);
@@ -230,11 +232,13 @@ internal sealed class SettingsWindow : Window
     }
     internal void RefreshItems()
     {
-        applications.ItemsSource = settings.Items.Select(item =>
-        {
-            if (!iconCache.TryGetValue(item.Target, out var icon)) iconCache[item.Target] = icon = IconService.Bitmap(IconService.Load(item));
-            return new PinnedView(item.Name, icon);
-        }).ToArray();
+        applications.ItemsSource = settings.Items.Select(item => new PinnedView(item.Name, ReadIcon(item))).ToArray();
+    }
+    private ImageSource ReadIcon(DockItem item)
+    {
+        if (!iconCache.TryGetValue(item.Target, out var icon))
+            iconCache[item.Target] = icon = iconProvider?.Invoke(item) ?? IconService.Bitmap(IconService.Load(item));
+        return icon;
     }
     private void AddApplication()
     {

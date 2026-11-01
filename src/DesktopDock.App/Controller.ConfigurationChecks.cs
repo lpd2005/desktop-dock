@@ -59,6 +59,9 @@ internal sealed partial class Controller
             Children<Button>(window).Single(x => x.Content as string == "重试保存").RaiseEvent(new RoutedEventArgs(Button.ClickEvent)); window.UpdateLayout();
             Require(SettingsStore.Load(path).IconSize == 60 && SettingsStore.Load(path + ".bak").IconSize == 52
                 && !Children<Button>(window).Any(x => x.Content as string == "重试保存"), "SaveRetryClearsNoticeAndRetainsPreviousVersion");
+            var firstIcon = controller.dock.SettingsIcon(controller.settings.Items[0]);
+            window.Close(); controller.OpenSettings(); controller.settingsWindow!.UpdateLayout();
+            Require(Children<Image>(controller.settingsWindow).Any(x => ReferenceEquals(x.Source, firstIcon)), "ReopenedSettingsReuseFrozenDockIconImages");
         }
         finally { controller.settingsWindow?.Close(); }
         return checks;

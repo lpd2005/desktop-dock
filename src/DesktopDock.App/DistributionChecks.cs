@@ -23,6 +23,7 @@ internal static class DistributionChecks
         Directory.CreateDirectory(data);
         var checks = new Dictionary<string, bool>();
         void Require(bool condition, string name) { checks[name] = condition; if (!condition) throw new InvalidOperationException("Distribution: " + name); }
+        foreach (var check in LaunchCoordinator.CheckIdentityCache()) Require(check.Value, check.Key);
         async Task WaitFor(Func<bool> condition)
         {
             for (int i = 0; i < 80 && !condition(); i++) await Task.Delay(30);
