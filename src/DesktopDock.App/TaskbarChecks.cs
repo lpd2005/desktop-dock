@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Text.Json;
 using System.Windows;
+using System.Windows.Interop;
 using DesktopDock.Core;
 
 namespace DesktopDock.App;
@@ -28,6 +29,13 @@ internal static class TaskbarChecks
                 await Task.Delay(1600);
                 enhancement.TickForChecks();
                 Require(!TaskbarNative.IsPresented((nint)before.Handle), "ActualTaskbarHidden");
+                Require(before.SameLayoutAs(before with { Work = before.ExpandedWork }), "OwnedWorkAreaReleaseDoesNotCountAsLayoutChange");
+                Require(!before.SameLayoutAs(null), "MissingTaskbarDoesNotMatchLayout");
+                Require(!before.SameLayoutAs(before with { Handle = before.Handle + 1 }), "ReplacedTaskbarDoesNotMatchLayout");
+                Require(!before.SameLayoutAs(before with { ProcessStart = before.ProcessStart + 1 }), "RestartedExplorerDoesNotMatchLayout");
+                Require(!before.SameLayoutAs(before with { Frame = before.Frame with { Bottom = before.Frame.Bottom + 1 } }), "ResizedTaskbarDoesNotMatchLayout");
+                Require(!before.SameLayoutAs(before with { Monitor = before.Monitor with { Right = before.Monitor.Right + 1 } }), "ChangedMonitorDoesNotMatchLayout");
+                Require(!before.SameLayoutAs(before with { NativeAutoHide = !before.NativeAutoHide }), "ChangedNativeAutoHideDoesNotMatchLayout");
                 var workBeforeSuspend = TaskbarNative.Capture()!.Work;
                 enhancement.SetSuspended(true); enhancement.TickForChecks();
                 Require(TaskbarNative.IsPresented((nint)before.Handle) && !enhancement.MotionActive && enhancement.GuardRunning,
@@ -35,9 +43,34 @@ internal static class TaskbarChecks
                 await Task.Delay(350); enhancement.TickForChecks();
                 Require(TaskbarNative.IsPresented((nint)before.Handle) && TaskbarNative.Capture()?.Work == workBeforeSuspend,
                     "SuspendedTicksDoNotHideTaskbarOrChangeWorkArea");
+                int guardBeforeWake = enhancement.GuardProcessId;
+                enhancement.EnvironmentChanged();
+                Require(enhancement.Active && enhancement.GuardProcessId == guardBeforeWake,
+                    "UnchangedDisplayNotificationPreservesEnhancementAcrossWake");
                 enhancement.SetSuspended(false); await Task.Delay(350); enhancement.TickForChecks();
                 Require(enhancement.Active && !TaskbarNative.IsPresented((nint)before.Handle) && TaskbarNative.Capture()?.Work == workBeforeSuspend,
                     "ResumeRevalidatesAndRestartsExistingTaskbarEnhancement");
+                using (var source = new HwndSource(new HwndSourceParameters("Desktop Dock screen wake fixture")
+                { WindowStyle = unchecked((int)0x80000000), Width = 1, Height = 1 }))
+                using (var environment = new DesktopEnvironment(source, enhancement.SetSuspended, _ => enhancement.EnvironmentChanged()))
+                {
+                    Require(environment.DisplayRegistered, "DisplayPowerNotificationsRegistered");
+                    await Task.Delay(300); // Drain the initial real display-state notification.
+                    for (int cycle = 0; cycle < 2; cycle++)
+                    {
+                        DesktopEnvironmentChecks.DisplayState(source.Handle, 0);
+                        Native.SendMessage(source.Handle, 0x007E, 32, 0);
+                        Native.SendMessage(source.Handle, 0x0218, 18, 0);
+                        await Task.Delay(350);
+                        Require(enhancement.Active && enhancement.GuardProcessId == guardBeforeWake && TaskbarNative.IsPresented((nint)before.Handle),
+                            "DisplayOffPreservesEnhancementDespitePowerAndDisplayMessages" + cycle);
+                        DesktopEnvironmentChecks.DisplayState(source.Handle, 1);
+                        await Task.Delay(650); enhancement.TickForChecks();
+                        Require(enhancement.Active && enhancement.GuardProcessId == guardBeforeWake && !TaskbarNative.IsPresented((nint)before.Handle)
+                            && TaskbarNative.Capture()?.Work == workBeforeSuspend && !environment.Pending,
+                            "ScreenOnAutomaticallyHidesSameTaskbarWithoutRestartingGuard" + cycle);
+                    }
+                }
                 enhancement.InputForChecks = null;
                 var belowEdge = new Native.Point { X = before.Frame.Left + (before.Frame.Right - before.Frame.Left) / 2,
                     Y = before.Frame.Top + (before.Frame.Bottom - before.Frame.Top) / 2 };
@@ -176,7 +209,8 @@ internal static class TaskbarChecks
                     GlassCpuPercent = (glassProcess.TotalProcessorTime - glassCpu).TotalMilliseconds / watch.Elapsed.TotalMilliseconds / Environment.ProcessorCount * 100,
                     GuardCpuPercent = (guardProcess.TotalProcessorTime - guardCpu).TotalMilliseconds / watch.Elapsed.TotalMilliseconds / Environment.ProcessorCount * 100
                 };
-                enhancement.EnvironmentChanged(); await Task.Delay(400);
+                enhancement.CaptureForChecks = () => before with { Frame = before.Frame with { Bottom = before.Frame.Bottom + 1 } };
+                enhancement.EnvironmentChanged(); enhancement.CaptureForChecks = null; await Task.Delay(400);
                 Require(!enhancement.Active && enhancement.Status.Contains("请重新启用"), "EnvironmentChangeStopsEnhancementAndExplainsReenable");
                 var after = TaskbarNative.Capture()!;
                 Require(TaskbarNative.IsPresented((nint)before.Handle) == before.WasVisible, "OriginalVisibilityRestored");

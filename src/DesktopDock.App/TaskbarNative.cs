@@ -15,6 +15,10 @@ internal sealed record TaskbarSnapshot(long Handle, uint ProcessId, long Process
         && Frame.Bottom - Monitor.Top < (Monitor.Bottom - Monitor.Top) / 3;
     public bool CanReleaseTop => IsTop && Math.Abs(Work.Top - Frame.Bottom) <= 3;
     public WindowBounds ExpandedWork => CanReleaseTop ? Work with { Top = Monitor.Top } : Work;
+    // The work area can be our released reservation or Explorer's exact original reservation.
+    public bool SameLayoutAs(TaskbarSnapshot? other) => other is not null && other.IsTop
+        && Handle == other.Handle && ProcessId == other.ProcessId && ProcessStart == other.ProcessStart
+        && Frame == other.Frame && Monitor == other.Monitor && NativeAutoHide == other.NativeAutoHide;
 }
 
 internal static class TaskbarNative

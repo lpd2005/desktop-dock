@@ -38,6 +38,21 @@ internal sealed partial class DockWindow
             Native.SendMessage(Handle, 0x02B1, 7, session + 1);
             await Task.Delay(300);
             Require(callbacks == before && !suspended, "UnrelatedSettingsAndOtherSessionsAreIgnored");
+            Require(environment.DisplayRegistered, "DisplayStateNotificationRegistered");
+            DesktopEnvironmentChecks.DisplayState(Handle, 0, Guid.Empty);
+            DesktopEnvironmentChecks.DisplayState(Handle, 0, length: 0);
+            DesktopEnvironmentChecks.DisplayState(Handle, 0, length: 8);
+            DesktopEnvironmentChecks.DisplayState(Handle, 3);
+            Native.SendMessage(Handle, 0x0218, 0x8013, 0);
+            DesktopEnvironmentChecks.DisplayState(Handle, 2);
+            await Task.Delay(300);
+            Require(callbacks == before && !suspended, "UnrelatedMalformedAndDimPowerEventsDoNotSuspend");
+            DesktopEnvironmentChecks.DisplayState(Handle, 0);
+            Native.SendMessage(Handle, 0x0218, 18, 0); await Task.Delay(350);
+            Require(suspended && !IsDockVisible && !environment.Pending, "DisplayOffBlocksPowerResumeWithoutPolling");
+            DesktopEnvironmentChecks.DisplayState(Handle, 1); await Settled(); await WaitUntilShownForChecks();
+            Require(lastChange.HasFlag(DesktopChange.Resume) && IsDockVisible, "DisplayOnRestoresDockWithoutSleepNotification");
+            before = callbacks;
             for (int i = 0; i < 30; i++) Native.SendMessage(Handle, 0x001A, 0x002F, 0);
             Require(callbacks == before, "EnvironmentChangesDoNotRepositionSynchronously");
             await Settled();
@@ -52,6 +67,8 @@ internal sealed partial class DockWindow
             Require(suspended && !IsDockVisible && !Native.IsWindowVisible(visualSource.Handle)
                 && !visibilityTimer.IsEnabled && !rendering, "LockImmediatelyHidesBothDockWindowsAndStopsClocks");
             Require(windowPreview?.Open != true && windowPreview?.ThumbnailCount == 0, "LockReleasesPreviewThumbnails");
+            DesktopEnvironmentChecks.DisplayState(Handle, 0); DesktopEnvironmentChecks.DisplayState(Handle, 1); await Task.Delay(350);
+            Require(suspended && !IsDockVisible, "ScreenOnDoesNotOverrideSessionLock");
             SendCheckMouse(0x0201, 0, 0); Summon();
             Require(pressedIndex < 0 && !IsDockVisible, "SuspendedDockRejectsQueuedMouseAndReveal");
             Native.SendMessage(Handle, 0x0218, 4, 0);

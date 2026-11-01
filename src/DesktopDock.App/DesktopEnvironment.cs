@@ -16,11 +16,14 @@ internal sealed class DesktopEnvironment : IDisposable
     private readonly Action<bool> suspend;
     private readonly Action<DesktopChange> refresh;
     private readonly int session;
+    internal static readonly Guid DisplaySetting = new("2B84C20E-AD23-4DDF-93DB-05FFBD7EFCA5");
+    private readonly nint displayNotification;
     private DesktopChange pending;
     private int registrationAttempts = 1;
-    private bool locked, sleeping, disconnected, changingDisplay, reportedSuspended, disposed;
+    private bool locked, sleeping, displayOff, disconnected, changingDisplay, reportedSuspended, disposed;
     internal int ShellMessage { get; } = RegisterWindowMessage("TaskbarCreated");
     internal bool SessionRegistered { get; private set; }
+    internal bool DisplayRegistered => displayNotification != 0;
     internal bool Pending => timer.IsEnabled;
 
     internal DesktopEnvironment(HwndSource source, Action<bool> suspend, Action<DesktopChange> refresh)
@@ -31,6 +34,8 @@ internal sealed class DesktopEnvironment : IDisposable
         timer = new(DispatcherPriority.Background, source.Dispatcher) { Interval = TimeSpan.FromMilliseconds(250) };
         timer.Tick += (_, _) => Flush();
         source.AddHook(Message);
+        var displaySetting = DisplaySetting;
+        displayNotification = RegisterPowerSettingNotification(source.Handle, ref displaySetting, 0);
         RetryRegistration();
     }
 
@@ -47,6 +52,19 @@ internal sealed class DesktopEnvironment : IDisposable
                 sleeping = true; Pause(); handled = true; return 1;
             case 0x0218 when wparam == 7 || wparam == 18:
                 sleeping = false; Queue(DesktopChange.Resume); handled = true; return 1;
+            case 0x0218 when wparam == 0x8013 && lparam != 0:
+                var setting = Marshal.PtrToStructure<PowerSettingHeader>(lparam);
+                if (setting.Setting != DisplaySetting || setting.Length != sizeof(int)) break;
+                int value = Marshal.ReadInt32(lparam, Marshal.SizeOf<PowerSettingHeader>());
+                if (value is < 0 or > 2) break;
+                bool off = value == 0;
+                if (displayOff != off)
+                {
+                    displayOff = off;
+                    if (off) { timer.Stop(); Pause(); }
+                    else Queue(DesktopChange.Resume);
+                }
+                handled = true; return 1;
             case 0x02B1 when lparam == session:
                 switch ((int)wparam)
                 {
@@ -61,7 +79,7 @@ internal sealed class DesktopEnvironment : IDisposable
         return 0;
     }
 
-    private bool Unavailable => locked || sleeping || disconnected || changingDisplay;
+    private bool Unavailable => locked || sleeping || displayOff || disconnected || changingDisplay;
     private void Pause()
     {
         if (!reportedSuspended && Unavailable) { reportedSuspended = true; suspend(true); }
@@ -71,12 +89,12 @@ internal sealed class DesktopEnvironment : IDisposable
         pending |= change;
         if ((change & (DesktopChange.Display | DesktopChange.Dpi | DesktopChange.Shell)) != 0) changingDisplay = true;
         Pause(); timer.Stop(); timer.Interval = TimeSpan.FromMilliseconds(250);
-        if (!locked && !sleeping && !disconnected) timer.Start();
+        if (!locked && !sleeping && !displayOff && !disconnected) timer.Start();
     }
     private void Flush()
     {
         timer.Stop();
-        if (disposed || locked || sleeping || disconnected) return;
+        if (disposed || locked || sleeping || displayOff || disconnected) return;
         if (!SessionRegistered && registrationAttempts < 5)
         { registrationAttempts++; SessionRegistered = WTSRegisterSessionNotification(source.Handle, 0); }
         var changes = pending; pending = DesktopChange.None; changingDisplay = false;
@@ -96,8 +114,12 @@ internal sealed class DesktopEnvironment : IDisposable
         if (disposed) return;
         disposed = true; timer.Stop(); source.RemoveHook(Message);
         if (SessionRegistered) WTSUnRegisterSessionNotification(source.Handle);
+        if (displayNotification != 0) UnregisterPowerSettingNotification(displayNotification);
     }
+    [StructLayout(LayoutKind.Sequential)] private struct PowerSettingHeader { public Guid Setting; public uint Length; }
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int RegisterWindowMessage(string name);
     [DllImport("wtsapi32.dll")] private static extern bool WTSRegisterSessionNotification(nint window, uint flags);
     [DllImport("wtsapi32.dll")] private static extern bool WTSUnRegisterSessionNotification(nint window);
+    [DllImport("user32.dll")] private static extern nint RegisterPowerSettingNotification(nint window, ref Guid setting, uint flags);
+    [DllImport("user32.dll")] private static extern bool UnregisterPowerSettingNotification(nint notification);
 }

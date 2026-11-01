@@ -179,7 +179,7 @@ internal sealed partial class DockWindow : IDisposable
         hooks.Add(Native.SetWinEventHook(0x000E, 0x000F, 0, windowEvent, 0, 0, 0)); // Shell drag start/end, where supplied.
         environment = new(source, SetSuspended, change => { Reposition(); EnvironmentChanged?.Invoke(change); });
         Reposition();
-        visibilityTimer.Start();
+        if (!suspended) visibilityTimer.Start();
     }
 
     public async Task LoadIcons(bool fromDrop = false)

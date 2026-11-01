@@ -30,6 +30,7 @@ internal sealed class TaskbarEnhancement : IDisposable
     internal bool SlideUsed => motion?.SlideUsed == true;
     internal Func<(bool Edge, bool Over, bool Shell, bool Switching)>? InputForChecks { get; set; }
     internal Func<(Native.Point Pointer, bool Down, bool Shell, bool Switching)>? PointerForChecks { get; set; }
+    internal Func<TaskbarSnapshot?>? CaptureForChecks { get; set; }
 
     public TaskbarEnhancement(string data)
     {
@@ -118,8 +119,7 @@ internal sealed class TaskbarEnhancement : IDisposable
         {
             lastValidation = now;
             var current = TaskbarNative.Capture();
-            if (!TaskbarNative.Matches(state.Snapshot) || current is null || !current.IsTop || current.Frame != state.Snapshot.Frame || current.Monitor != state.Snapshot.Monitor
-                || current.NativeAutoHide != state.Snapshot.NativeAutoHide)
+            if (!TaskbarNative.Matches(state.Snapshot) || current is null || !state.Snapshot.SameLayoutAs(current))
             { Stop(); Status = "任务栏位置、显示器或资源管理器已变化；已恢复，请重新启用"; Changed(); return; }
             if (state.WorkChanged && current.Work != state.Snapshot.ExpandedWork)
             {
@@ -159,12 +159,20 @@ internal sealed class TaskbarEnhancement : IDisposable
     {
         if (disposed || suspended == value) return;
         suspended = value; visibility = new();
+        motion?.Invalidate();
         if (value) { timer.Stop(); motion?.Request(true, true); }
         else if (state is not null) { lastValidation = double.NegativeInfinity; timer.Start(); Tick(); }
     }
     internal void EnvironmentChanged()
     {
-        if (!Active) return;
+        if (state is null) return;
+        var current = CaptureForChecks is null ? TaskbarNative.Capture() : CaptureForChecks();
+        if (TaskbarNative.Matches(state.Snapshot) && state.Snapshot.SameLayoutAs(current))
+        {
+            // Wake can rebroadcast display/DPI changes without replacing the taskbar.
+            // Keep the live guard and animation state; the next tick also validates the work area.
+            lastValidation = double.NegativeInfinity; motion?.Invalidate(); return;
+        }
         bool restored = Stop();
         Status = restored ? "显示环境或资源管理器已变化；已恢复任务栏，请重新启用增强"
             : "显示环境或资源管理器已变化；恢复记录已保留，请使用“恢复任务栏”重试";
