@@ -9,21 +9,25 @@ public sealed class DockVisibility
     private double? edgeSince;
     private double? clearSince;
     private bool summoned;
+    private double notificationUntil = double.NegativeInfinity;
     public bool IsTemporarilyShown { get; private set; }
 
     public void Reset()
     {
         lastInteraction = double.NegativeInfinity; edgeSince = clearSince = null;
         summoned = IsTemporarilyShown = false;
+        notificationUntil = double.NegativeInfinity;
     }
 
     public void Summon(double now) { summoned = true; lastInteraction = now; }
+    public void Notify(double now) { notificationUntil = now + 3; Summon(now); }
+    public void ClearNotification() => notificationUntil = double.NegativeInfinity;
     public void Interact(double now) { if (summoned) lastInteraction = now; }
     public bool ShouldShow(bool covered, bool switching, double now, bool autoHide = false,
         bool atEdge = false, bool overDock = false, bool interacting = false)
     {
         if (switching)
-        { clearSince = edgeSince = null; summoned = IsTemporarilyShown = false; return false; }
+        { Reset(); return false; }
         if (atEdge)
         {
             edgeSince ??= now;
@@ -32,7 +36,7 @@ public sealed class DockVisibility
         else edgeSince = null;
         if (interacting) { summoned = true; lastInteraction = now; }
         if (summoned && overDock) lastInteraction = now;
-        if (summoned && now - lastInteraction >= LeaveSeconds) summoned = false;
+        if (summoned && now >= notificationUntil && now - lastInteraction >= LeaveSeconds) summoned = false;
         IsTemporarilyShown = summoned;
         if (covered) clearSince = null;
         else clearSince ??= now;

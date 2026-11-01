@@ -33,6 +33,7 @@ internal sealed partial class DockWindow
                     {
                         if (previewIndex < 0 || previewIndex >= entries.Count) return;
                         launcher.ActivatePreview(entries[previewIndex], target);
+                        AcknowledgeAttention(entries[previewIndex]);
                         NoteInteraction(); appStatesDirty = occlusionDirty = true;
                         previewHover.Reset(); previewIndex = -1;
                     });

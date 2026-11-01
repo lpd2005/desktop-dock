@@ -30,7 +30,7 @@ internal sealed class SettingsWindow : Window
     private static readonly ControlTemplate switchTemplate = CreateSwitchTemplate();
     private sealed record PinnedView(string Name, ImageSource Icon);
 
-    public SettingsWindow(DockSettings settings, Action apply, Action reload, Action quit, TaskbarEnhancement taskbar, FrameworkElement? systemPage = null, Func<DockItem, ImageSource>? iconProvider = null)
+    public SettingsWindow(DockSettings settings, Action apply, Action reload, Action quit, TaskbarEnhancement taskbar, FrameworkElement? systemPage = null, bool attentionAvailable = true, Func<DockItem, ImageSource>? iconProvider = null)
     {
         this.settings = settings; this.apply = apply; this.reload = reload;
         this.iconProvider = iconProvider;
@@ -81,6 +81,8 @@ internal sealed class SettingsWindow : Window
         var behavior = Section(appearance, "显示与桌面");
         AddCheck(behavior, "自动隐藏 Dock", "移到底边停留唤出，离开后收起", settings.AutoHide, v => settings.AutoHide = v);
         AddCheck(behavior, "窗口预览", "悬停已运行应用，预览并选择窗口", settings.WindowPreviews, v => settings.WindowPreviews = v);
+        var attention = AddCheck(behavior, "应用消息提醒", attentionAvailable ? "跟随系统任务栏闪烁请求，唤出约 3 秒，点击清除" : "当前环境无法接收系统任务栏闪烁通知", settings.AppAttention, v => settings.AppAttention = v);
+        attention.IsEnabled = attentionAvailable;
         AddCheck(behavior, "隐藏桌面图标", "在桌面面板中访问，退出 Dock 时恢复", settings.HideDesktopIcons, v => settings.HideDesktopIcons = v);
         Page("外观与动画", "透明图标、轻盈倒影，让桌面保持清爽。", appearance);
 

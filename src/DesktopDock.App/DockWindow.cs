@@ -114,7 +114,7 @@ internal sealed partial class DockWindow : IDisposable
 
     public DockWindow(DockSettings settings, Action openSettings, Action changed, Action recover, Action quit,
         Action<nint?>? toggleSettings = null, Func<nint>? settingsHandle = null, Action? toggleApplications = null,
-        Func<nint>? applicationsHandle = null, Func<bool>? applicationsOpen = null)
+        Func<nint>? applicationsHandle = null, Func<bool>? applicationsOpen = null, bool attentionAllowed = true)
     {
         this.settings = settings; this.openSettings = openSettings; this.changed = changed;
         this.recover = recover; this.quit = quit;
@@ -123,6 +123,7 @@ internal sealed partial class DockWindow : IDisposable
         this.toggleApplications = toggleApplications ?? (() => { });
         this.applicationsHandle = applicationsHandle ?? (() => 0);
         this.applicationsOpen = applicationsOpen ?? (() => false);
+        this.attentionAllowed = attentionAllowed;
         launcher = new();
         source = new HwndSource(new HwndSourceParameters("Desktop Dock")
         {
@@ -179,6 +180,7 @@ internal sealed partial class DockWindow : IDisposable
         hooks.Add(Native.SetWinEventHook(0x0016, 0x0017, 0, windowEvent, 0, 0, 0)); // Minimize start/end.
         hooks.Add(Native.SetWinEventHook(0x000E, 0x000F, 0, windowEvent, 0, 0, 0)); // Shell drag start/end, where supplied.
         environment = new(source, SetSuspended, change => { Reposition(); EnvironmentChanged?.Invoke(change); });
+        attentionHook = new(source, AttentionChanged);
         Reposition();
         if (!suspended) visibilityTimer.Start();
     }
@@ -203,6 +205,7 @@ internal sealed partial class DockWindow : IDisposable
             var nextGeometry = DockLayout.Calculate(localEntries.Length, settings.IconSize, settings.Magnification, null, width / scale, separatorBefore: nextSeparator);
             renderer.SynchronizeIcons(entries, localEntries, pixels, nextGeometry, width, height, scale);
             entries = localEntries.ToList(); separatorBefore = nextSeparator;
+            RefreshAttention();
             occlusionDirty = appStatesDirty = true;
             RenderLayout();
             CheckVisibility();
@@ -233,6 +236,7 @@ internal sealed partial class DockWindow : IDisposable
     {
         CloseWindowPreview();
         renderer.SetTheme(settings);
+        RefreshAttention();
         Reposition();
         CheckVisibility();
     }
@@ -461,6 +465,7 @@ internal sealed partial class DockWindow : IDisposable
 
     private void Launch(DockItem item, bool toggle = true, nint? foregroundAtPress = null, bool allowLaunch = true)
     {
+        AcknowledgeAttention(item);
         CloseWindowPreview();
         NoteInteraction();
         if (item.Target == "dock:settings") { if (toggle) toggleSettings(foregroundAtPress); else openSettings(); return; }
@@ -541,6 +546,8 @@ internal sealed partial class DockWindow : IDisposable
         double now = clock.Elapsed.TotalSeconds;
         bool switching = switchingForChecks ?? ((Native.GetAsyncKeyState(0x12) & 0x8000) != 0
             && ((Native.GetAsyncKeyState(0x11) & 0x8000) == 0 || (Native.GetAsyncKeyState(0x09) & 0x8000) != 0));
+        if (revealAttention && !switching && !dragging && !externalDrop && !menuOpen)
+        { revealAttention = false; visibility.Notify(now); }
         bool wasShellDragging = shellDrag.Active;
         bool shellDragging = shellDrag.Update(systemDragging, switching, scale, RestDockArea);
         if (!shellDragging) systemDragging = false;
@@ -572,6 +579,7 @@ internal sealed partial class DockWindow : IDisposable
         bool wasTarget = motion.Target;
         if (!show)
         {
+            renderer.PresentAttention(false);
             blocked = cachedOccluded || !settings.AutoHide;
             autoHidden = !blocked;
             if (wasTarget)
@@ -584,6 +592,7 @@ internal sealed partial class DockWindow : IDisposable
             return;
         }
         blocked = autoHidden = false;
+        renderer.PresentAttention(true);
         RefreshAppStates(now, force: !wasTarget);
         if (!wasTarget) RenderLayout();
         motion.Request(true, settings.ReducedMotion);
@@ -629,6 +638,7 @@ internal sealed partial class DockWindow : IDisposable
         if (value)
         {
             blocked = true; visibilityTimer.Stop(); visibility.Reset();
+            renderer.PresentAttention(false);
             CancelInteraction(); StopRendering(); motion.Request(false, true);
             hover.Reset(0); renderer.ResetPressFeedback(); hoveredIndex = -1; tracking = false;
             labelTimer.Stop(); label.IsOpen = false; externalDrop = systemDragging = syntheticHover = false; insertion = -1;
@@ -765,7 +775,7 @@ internal sealed partial class DockWindow : IDisposable
         int index = entries.IndexOf(item);
         if (index >= 0) { entries.RemoveAt(index); renderer.RemoveIcon(index); }
         separatorBefore = entries.FindIndex(x => System.IO.Directory.Exists(Environment.ExpandEnvironmentVariables(x.Target)) || x.Target.StartsWith("shell:", StringComparison.OrdinalIgnoreCase));
-        changed(); RenderLayout();
+        RefreshAttention(); changed(); RenderLayout();
         if (pendingDropGeneration != 0) _ = LoadIcons();
     }
     private void FinishGhost(bool render = true)
@@ -837,6 +847,7 @@ internal sealed partial class DockWindow : IDisposable
     {
         if (disposed) return;
         environment.Dispose();
+        attentionHook.Dispose();
         CancelInteraction(); disposed = true; StopRendering(); visibilityTimer.Stop(); labelTimer.Stop(); label.IsOpen = false;
         foreach (nint hook in hooks) if (hook != 0) Native.UnhookWinEvent(hook);
         if (menuOpen) Native.EndMenu();

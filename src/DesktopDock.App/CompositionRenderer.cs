@@ -22,6 +22,9 @@ internal sealed class CompositionRenderer : IDisposable
     private readonly ContainerVisual row;
     private readonly ContainerVisual reflectionRow;
     private readonly ContainerVisual indicatorRow;
+    private readonly ContainerVisual attentionRow;
+    private readonly ScalarKeyFrameAnimation attentionPulse;
+    private bool attentionPresented;
     private readonly ID3D11Device d3d;
     private readonly ID2D1Device d2d;
     private readonly CompositionGraphicsDevice graphics;
@@ -85,11 +88,15 @@ internal sealed class CompositionRenderer : IDisposable
         public TimedTransition Running { get; } = new();
         public TimedTransition Active { get; } = new();
         public DockAppState State { get; set; }
+        public StateAdornment? Attention { get; set; }
+        public bool AttentionPending { get; set; }
+        public bool Pulsing { get; set; }
         public void Dispose()
         {
             Image.Brush?.Dispose(); Reflection.Brush?.Dispose();
             Image.Dispose(); Reflection.Dispose(); imageSurface.Dispose(); reflectionSurface.Dispose();
             Indicator.Dispose();
+            Attention?.Dispose();
         }
     }
 
@@ -101,6 +108,10 @@ internal sealed class CompositionRenderer : IDisposable
         row = compositor.CreateContainerVisual();
         reflectionRow = compositor.CreateContainerVisual();
         indicatorRow = compositor.CreateContainerVisual();
+        attentionRow = compositor.CreateContainerVisual();
+        attentionPulse = compositor.CreateScalarKeyFrameAnimation();
+        attentionPulse.InsertKeyFrame(0, .25f); attentionPulse.InsertKeyFrame(.5f, .8f); attentionPulse.InsertKeyFrame(1, .25f);
+        attentionPulse.Duration = TimeSpan.FromSeconds(1.4); attentionPulse.IterationBehavior = AnimationIterationBehavior.Forever;
         target.Root = root;
         try { d3d = D3D11.D3D11CreateDevice(DriverType.Hardware, DeviceCreationFlags.BgraSupport); HardwareRendering = true; }
         catch { d3d = D3D11.D3D11CreateDevice(DriverType.Warp, DeviceCreationFlags.BgraSupport); }
@@ -117,6 +128,7 @@ internal sealed class CompositionRenderer : IDisposable
         placeholder.Shapes.Add(outline);
         root.Children.InsertAtTop(reflectionRow);
         root.Children.InsertAtTop(placeholder);
+        root.Children.InsertAtTop(attentionRow);
         root.Children.InsertAtTop(row);
         root.Children.InsertAtTop(indicatorRow);
         root.Children.InsertAtTop(insertion);
@@ -133,7 +145,44 @@ internal sealed class CompositionRenderer : IDisposable
             foreach (var icon in icons) { icon.Running.Reset(icon.State.Running ? 1 : 0); icon.Active.Reset(icon.State.Active ? 1 : 0); }
             StateAnimationActive = false;
         }
+        foreach (var icon in icons) UpdateAttention(icon);
     }
+
+    public bool SetAttention(IReadOnlyList<bool> pending)
+    {
+        bool changed = false;
+        for (int i = 0; i < icons.Count; i++)
+        {
+            bool value = i < pending.Count && pending[i]; var icon = icons[i];
+            if (icon.AttentionPending == value) continue;
+            changed = true; icon.AttentionPending = value;
+            if (value && icon.Attention is null)
+            {
+                icon.Attention = new(compositor, WColor.FromArgb(255, 227, 62, 79), WColor.FromArgb(0, 0, 0, 0), 0);
+                attentionRow.Children.InsertAtTop(icon.Attention.Visual);
+            }
+            UpdateAttention(icon);
+        }
+        return changed;
+    }
+    public void PresentAttention(bool presented)
+    {
+        if (attentionPresented == presented) return;
+        attentionPresented = presented; foreach (var icon in icons) UpdateAttention(icon);
+    }
+    private void UpdateAttention(IconVisual icon)
+    {
+        if (icon.Attention is not { } attention) return;
+        bool visible = attentionPresented && icon.AttentionPending && icon.Image.IsVisible;
+        attention.Visual.IsVisible = visible;
+        bool pulse = visible && !reducedMotion;
+        if (pulse == icon.Pulsing) { if (!pulse) attention.Visual.Opacity = .52f; return; }
+        icon.Pulsing = pulse;
+        if (pulse) attention.Visual.StartAnimation("Opacity", attentionPulse);
+        else { attention.Visual.StopAnimation("Opacity"); attention.Visual.Opacity = .52f; }
+    }
+    internal (bool Pending, bool Visible, bool Pulsing) AttentionForChecks(int index)
+        => (icons[index].AttentionPending, icons[index].Attention?.Visual.IsVisible == true, icons[index].Pulsing);
 
     public bool SetAppStates(IReadOnlyList<DockAppState> states)
     {
@@ -175,6 +224,7 @@ internal sealed class CompositionRenderer : IDisposable
         row.Children.RemoveAll();
         reflectionRow.Children.RemoveAll();
         indicatorRow.Children.RemoveAll();
+        attentionRow.Children.RemoveAll();
         foreach (var icon in icons) icon.Dispose();
         icons.Clear();
     }
@@ -281,6 +331,7 @@ internal sealed class CompositionRenderer : IDisposable
     private void DetachIcon(IconVisual icon)
     {
         row.Children.Remove(icon.Image); reflectionRow.Children.Remove(icon.Reflection);
+        if (icon.Attention is not null) attentionRow.Children.Remove(icon.Attention.Visual);
         indicatorRow.Children.Remove(icon.Indicator.Visual); icon.Dispose();
     }
 
@@ -291,6 +342,7 @@ internal sealed class CompositionRenderer : IDisposable
         row.Size = root.Size;
         reflectionRow.Size = root.Size;
         indicatorRow.Size = root.Size;
+        attentionRow.Size = root.Size;
         OrderingActive = false;
         PressFeedbackActive = false;
         StateAnimationActive = false;
@@ -320,6 +372,13 @@ internal sealed class CompositionRenderer : IDisposable
             icon.Offset = new((float)entry.X.Value * dpiScale + (actualSize - feedbackSize) / 2,
                 (float)geometry.Baseline(height / dpiScale) * dpiScale - feedbackSize, 0);
             icon.Scale = new(feedbackSize / IconService.Resolution, feedbackSize / IconService.Resolution, 1);
+            if (entry.Attention is { } attention)
+            {
+                float padding = 5 * dpiScale;
+                attention.SetBounds(new(icon.Offset.X - padding - 1, icon.Offset.Y - padding - 1, 0),
+                    new(feedbackSize + 2 * padding), 13 * dpiScale);
+                UpdateAttention(entry);
+            }
             var reflection = entry.Reflection;
             reflection.IsVisible = icon.IsVisible;
             reflection.Offset = new(icon.Offset.X, (float)geometry.Baseline(height / dpiScale) * dpiScale + 2 * dpiScale, 0);
@@ -360,6 +419,7 @@ internal sealed class CompositionRenderer : IDisposable
         disposed = true;
         target.Root = null;
         ClearIcons();
+        attentionPulse.Dispose(); attentionRow.Dispose();
         root.Dispose(); target.Dispose(); graphics.Dispose(); d2d.Dispose(); d3d.Dispose(); compositor.Dispose();
     }
 }

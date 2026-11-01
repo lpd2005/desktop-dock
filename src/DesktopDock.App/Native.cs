@@ -10,6 +10,8 @@ internal static class Native
     [StructLayout(LayoutKind.Sequential)] internal struct Rect { public int Left, Top, Right, Bottom; }
     [StructLayout(LayoutKind.Sequential)] internal struct QueueOptions { public int Size, ThreadType, ApartmentType; }
     [StructLayout(LayoutKind.Sequential)] internal struct MouseTrack { public int Size, Flags; public nint Hwnd; public uint HoverTime; }
+    [StructLayout(LayoutKind.Sequential)] internal struct FlashInfo { public uint Size; public nint Window; public uint Flags, Count, Timeout; }
+    [DllImport("user32.dll")] internal static extern bool FlashWindowEx(ref FlashInfo info);
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     internal struct ShellFileInfo
     {

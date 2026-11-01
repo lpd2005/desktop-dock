@@ -98,6 +98,13 @@ Check(!visibility.ShouldShow(false, false, 28.2), "Lifecycle reset requires stab
 Check(visibility.ShouldShow(false, false, 28.5), "Stable reveal works after lifecycle reset");
 visibility.ShouldShow(true, false, 29, atEdge: true); visibility.Reset();
 Check(!visibility.ShouldShow(true, false, 29.2, atEdge: true), "Lifecycle reset clears stale edge dwell");
+visibility.Reset(); visibility.Notify(30);
+Check(visibility.ShouldShow(true, false, 32.9, autoHide: true), "Application attention reveals for three seconds despite coverage");
+Check(!visibility.ShouldShow(true, false, 33.01, autoHide: true), "Application attention reveal expires");
+visibility.Notify(34); visibility.ClearNotification();
+Check(!visibility.ShouldShow(true, false, 35), "Acknowledgement clears notification reveal deadline");
+visibility.Notify(36); Check(!visibility.ShouldShow(true, true, 36.1), "Task switching suppresses application attention reveal");
+Check(!visibility.ShouldShow(true, false, 36.2), "Attention does not flash back after task switch");
 Check(AppClick.Decide(false, false, false) == AppClickAction.Launch, "Unopened application launches");
 Check(AppClick.Decide(false, false, false, allowLaunch: false) == AppClickAction.Ignore, "Single click never launches an unopened app");
 Check(AppClick.Decide(true, true, false) == AppClickAction.Minimize, "Active app minimizes on repeat click");

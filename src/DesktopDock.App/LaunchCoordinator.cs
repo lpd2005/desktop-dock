@@ -170,6 +170,16 @@ internal sealed class LaunchCoordinator : IDisposable
         return windows;
     }
 
+    internal bool IsAssociated(DockItem item, nint window)
+    {
+        if (!WindowClose.CanClose(window)) return false;
+        var target = ResolveTarget(item);
+        if (bound.TryGetValue(item.Target + "\n" + item.Arguments, out var cached) && cached.Handle == window)
+        { Native.GetWindowThreadProcessId(window, out uint pid); if (pid == cached.Process) return true; }
+        if (target.SpecificWindow || target.ProcessName == "explorer" && target.AppId is null && !WindowClose.IsFileExplorer(window)) return false;
+        return Matches(window, 0, target) && (target.AppId is not null || target.ExecutablePath is null || WindowClose.ExecutableMatches(window, target.ExecutablePath));
+    }
+
     internal bool ActivatePreview(DockItem item, PreviewTarget target)
     {
         if (!target.Valid || !WindowsFor(item).Contains(target.Window)) return false;

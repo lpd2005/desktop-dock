@@ -81,6 +81,14 @@ internal static class RegressionProbe
         var modeTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(100) };
         modeTimer.Tick += (_, _) =>
         {
+            string flash = Path.Combine(data, "flash.txt");
+            if (File.Exists(flash))
+            {
+                string command = ReadShared(flash).Trim(); File.Delete(flash);
+                var info = new Native.FlashInfo { Size = (uint)System.Runtime.InteropServices.Marshal.SizeOf<Native.FlashInfo>(), Window = new WindowInteropHelper(window).Handle,
+                    Flags = command == "start" ? 14u : 0u, Count = 3, Timeout = 300 };
+                Native.FlashWindowEx(ref info);
+            }
             if (allowForegroundProcess != 0 && Native.GetForegroundWindow() == new WindowInteropHelper(window).Handle)
                 Native.AllowSetForegroundWindow(allowForegroundProcess);
             string file = Path.Combine(data, "mode.txt");
