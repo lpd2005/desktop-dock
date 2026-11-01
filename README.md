@@ -38,14 +38,14 @@
 
 ## 下载与安装 · Install
 
-请前往 [Releases 发布页面](https://github.com/lpd2005/desktop-dock/releases) 下载。当前公开版本为 **0.1.0-preview.23 测试版**，尚未发布稳定版本。源码开发版 **0.1.0-preview.28** 新增应用闪烁提醒、图标缓存复用与性能采样入口，尚未发布对应安装包。
+请前往 [Releases 发布页面](https://github.com/lpd2005/desktop-dock/releases) 下载。本次预览版为 **0.1.0-preview.28**，包含应用闪烁提醒、图标缓存复用、配置保护与息屏恢复修复；完整变化见 [版本说明](docs/releases/0.1.0-preview.28.md)。尚未发布稳定版本。
 
 支持 **Windows 11 22H2 或更新版本、x64**，目前以主显示器为主要支持范围。运行包自带 .NET，无需额外安装运行时。
 
 | 下载方式 | 适合的使用方式 | 下载 |
 | :--- | :--- | :--- |
-| Windows 安装包（推荐） | 按向导安装，提供开始菜单入口与卸载，仅为当前用户安装 | [Setup-x64.exe](https://github.com/lpd2005/desktop-dock/releases/download/v0.1.0-preview.23/DesktopDock-0.1.0-preview.23-Setup-x64.exe) |
-| 便携版 | 完整解压后运行 `DesktopDock.exe` | [win-x64.zip](https://github.com/lpd2005/desktop-dock/releases/download/v0.1.0-preview.23/DesktopDock-0.1.0-preview.23-win-x64.zip) |
+| Windows 安装包（推荐） | 按向导安装，提供开始菜单入口与卸载，仅为当前用户安装 | [Setup-x64.exe](https://github.com/lpd2005/desktop-dock/releases/download/v0.1.0-preview.28/DesktopDock-0.1.0-preview.28-Setup-x64.exe) |
+| 便携版 | 完整解压后运行 `DesktopDock.exe` | [win-x64.zip](https://github.com/lpd2005/desktop-dock/releases/download/v0.1.0-preview.28/DesktopDock-0.1.0-preview.28-win-x64.zip) |
 
 安装后，在 **设置 → 启动与更新** 中开启登录后自启、检查和下载安装更新；自启默认关闭，升级保留已有配置。具体操作见 [使用说明](docs/USER_GUIDE.md)。
 
