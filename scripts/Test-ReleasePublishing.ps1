@@ -40,7 +40,7 @@ try {
            browser_download_url = "https://github.com/lpd2005/desktop-dock/releases/download/$taskTag/$taskName" }
     })
     $taskBase = @{ release = @{ tag_name = $taskTag; draft = $false; prerelease = $true; target_commitish = $taskHead; assets = $taskAssets; html_url = "https://github.com/lpd2005/desktop-dock/releases/tag/$taskTag" }
-        tagCommit = $taskHead; manifest = [Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $taskFixture 'artifacts/SHA256SUMS.txt'))); error = $false; race = $false; reads = 0 }
+        tagCommit = $taskHead; manifest = [Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $taskFixture 'artifacts/SHA256SUMS.txt'))); error = $false; race = $false; reads = 0; cacheStale = $false; cachedRelease = $null; temporaryDraft = $false }
     $taskStatePath = Join-Path $taskFixture '.tools/state.json'
     $taskCallsPath = Join-Path $taskFixture '.tools/calls.jsonl'
     $taskFake = @'
@@ -54,7 +54,9 @@ if ($taskState.error) { Write-Output 'Simulated API failure.'; exit 1 }
 if ($args[0] -eq 'api') {
     if ($args[1] -like '*/releases?*') {
         $taskState.reads++; if ($taskState.race -and $taskState.reads -eq 2) { $taskState.release.draft = $false }; Save-State
-        $taskRecords = @(); if ($taskState.release) { $taskRecords = @($taskState.release) }
+        if ($taskState.cacheStale -and $taskState.reads -eq 1) { $taskState.cachedRelease = $taskState.release | ConvertTo-Json -Depth 15 | ConvertFrom-Json; Save-State }
+        $taskVisibleRelease = if ($taskState.cacheStale -and 'Cache-Control: no-cache' -notin $args) { $taskState.cachedRelease } else { $taskState.release }
+        $taskRecords = @(); if ($taskVisibleRelease) { $taskRecords = @($taskVisibleRelease) }
         # An empty first page exercises paginated lookup, including drafts.
         ConvertTo-Json -InputObject @(@(), $taskRecords) -Depth 15 -Compress
     } elseif ($args[1] -like '*/matching-refs/*') {
@@ -69,14 +71,21 @@ if ($args[0] -eq 'api') {
             [IO.File]::WriteAllBytes((Join-Path $taskDirectory 'SHA256SUMS.txt'), [Convert]::FromBase64String($taskState.manifest))
         }
         create {
-            $taskState.release = @{ tag_name = 'v1.2.3-preview.1'; draft = $true; target_commitish = (git -C $taskRoot rev-parse HEAD).Trim(); assets = @() }
+            $taskState.release = @{ tag_name = 'v1.2.3-preview.1'; draft = $true; target_commitish = (git -C $taskRoot rev-parse HEAD).Trim(); assets = @(); html_url = 'https://github.com/lpd2005/desktop-dock/releases/tag/v1.2.3-preview.1' }
+            if ($taskState.temporaryDraft) { $taskState.release.html_url = 'https://github.com/lpd2005/desktop-dock/releases/tag/untagged-example' }
             Save-State
         }
         upload {
             $taskState.release.assets = @(Get-Content -LiteralPath (Join-Path $taskRoot '.tools/assets.json') -Raw | ConvertFrom-Json)
+            if ($taskState.temporaryDraft) { foreach ($taskAsset in $taskState.release.assets) { $taskAsset.browser_download_url = $taskAsset.browser_download_url.Replace('/v1.2.3-preview.1/', '/untagged-example/') } }
             Save-State
         }
-        edit { $taskState.release.draft = $false; Save-State }
+        edit {
+            $taskState.release.draft = $false; $taskState.tagCommit = $taskState.release.target_commitish
+            $taskState.release.html_url = 'https://github.com/lpd2005/desktop-dock/releases/tag/v1.2.3-preview.1'
+            foreach ($taskAsset in $taskState.release.assets) { $taskAsset.browser_download_url = $taskAsset.browser_download_url.Replace('/untagged-example/', '/v1.2.3-preview.1/') }
+            Save-State
+        }
         view { '{"isDraft":false}' }
         default { throw 'Unexpected release mutation.' }
     }
@@ -130,6 +139,11 @@ if ($args[0] -eq 'api') {
     Test-Publishing 'draft retry still uploads and publishes' { param($s) $s.release.draft = $true } -Arguments @('-Publish') -Mutations @('upload','edit')
     Test-Publishing 'manual default retains draft' { param($s) $s.release.draft = $true } -Mutations @('upload')
     Test-Publishing 'concurrently published draft blocks upload' { param($s) $s.release.draft = $true; $s.race = $true } -Arguments @('-Publish') -Success $false
+    Test-Publishing 'created draft bypasses cached release list' { param($s) $s.release = $null; $s.tagCommit = $null; $s.cacheStale = $true } -Arguments @('-Publish') -Mutations @('create','upload','edit')
+    Test-Publishing 'uploaded assets bypass cached draft metadata' { param($s) $s.release.draft = $true; $s.release.assets = @(); $s.cacheStale = $true } -Arguments @('-Publish') -Mutations @('upload','edit')
+    Test-Publishing 'new draft accepts its temporary asset URLs before publication' { param($s) $s.release = $null; $s.tagCommit = $null; $s.temporaryDraft = $true } -Arguments @('-Publish') -Mutations @('create','upload','edit')
+    Test-Publishing 'existing draft accepts only its own temporary asset URLs' { param($s) $s.release.draft = $true; $s.release.html_url = 'https://github.com/lpd2005/desktop-dock/releases/tag/untagged-example'; $s.temporaryDraft = $true } -Arguments @('-Publish') -Mutations @('upload','edit')
+    Test-Publishing 'published release cannot retain temporary asset URLs' { param($s) foreach ($a in $s.release.assets) { $a.browser_download_url = $a.browser_download_url.Replace('/v1.2.3-preview.1/', '/untagged-example/') } } -Arguments @('-VerifyPublished') -Success $false
     Write-Host "$taskCount release publishing checks passed. No network access or real publication."
     # GitHub's PowerShell runner propagates the last native exit code, including expected failures above.
     $global:LASTEXITCODE = 0

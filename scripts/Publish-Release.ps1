@@ -20,6 +20,8 @@ if (-not (Test-Path -LiteralPath $taskGh)) { $taskGh = (Get-Command gh -ErrorAct
 
 function Invoke-ReleaseCli {
     param([string[]]$Arguments)
+    # Read current metadata after creating a draft, uploading or publishing.
+    if ($Arguments[0] -eq 'api') { $Arguments += @('--header', 'Cache-Control: no-cache') }
     $taskResult = & $taskGh @Arguments
     if ($LASTEXITCODE -ne 0) { throw "GitHub release operation failed: $($Arguments[0])." }
     $taskResult
@@ -36,9 +38,14 @@ function Get-ReleaseRecord {
 function Assert-ReleaseAssets {
     param($Release)
     if (@($Release.assets).Count -ne $taskAllNames.Count) { throw 'Unexpected release assets.' }
+    $taskDownloadTag = $taskTag
+    # Before publication GitHub can give an untagged draft its own temporary URL.
+    if ($Release.draft -and $Release.html_url -cmatch '^https://github\.com/lpd2005/desktop-dock/releases/tag/(untagged-[a-zA-Z0-9-]+)$') {
+        $taskDownloadTag = $Matches[1]
+    }
     foreach ($taskName in $taskAllNames) {
         $taskAsset = @($Release.assets | Where-Object { $_.name -ceq $taskName })
-        $taskUrl = "https://github.com/lpd2005/desktop-dock/releases/download/$taskTag/$taskName"
+        $taskUrl = "https://github.com/lpd2005/desktop-dock/releases/download/$taskDownloadTag/$taskName"
         if ($taskAsset.Count -ne 1 -or $taskAsset[0].state -cne 'uploaded' -or $taskAsset[0].size -le 0 -or
             $taskAsset[0].digest -cnotmatch '^sha256:[a-f0-9]{64}$' -or $taskAsset[0].browser_download_url -cne $taskUrl) {
             throw "Invalid release asset: $taskName"
@@ -147,6 +154,11 @@ try {
     }
     if ($Publish) {
         Invoke-ReleaseCli @('release', 'edit', $taskTag, '--repo', 'lpd2005/desktop-dock', '--draft=false') | Out-Host
+        $taskPublicRelease = Get-ReleaseRecord
+        if (-not $taskPublicRelease -or $taskPublicRelease.draft -or $taskPublicRelease.target_commitish -ne $taskHead) { throw 'Published release metadata failed verification.' }
+        if (((Invoke-ReleaseCli @('api', "repos/lpd2005/desktop-dock/commits/$taskTag", '--jq', '.sha')) -join '') -ne $taskHead) { throw 'Published release tag points to another commit.' }
+        Assert-ReleaseAssets $taskPublicRelease
+        Assert-PublishedChecksums $taskPublicRelease
     }
     Invoke-ReleaseCli @('release', 'view', $taskTag, '--repo', 'lpd2005/desktop-dock', '--json', 'url,isDraft,isPrerelease', '--jq', '{url,isDraft,isPrerelease}')
 } finally { if ($taskTemporaryToken) { Remove-Item Env:GH_TOKEN -ErrorAction SilentlyContinue } }
