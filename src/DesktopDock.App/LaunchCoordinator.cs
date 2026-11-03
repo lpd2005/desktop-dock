@@ -192,6 +192,9 @@ internal sealed class LaunchCoordinator : IDisposable
         return true;
     }
 
+    internal bool ClosePreview(DockItem item, PreviewTarget target)
+        => target.Valid && WindowsFor(item).Contains(target.Window) && WindowClose.Request(target.Window, target.Process);
+
     internal static List<nint> Windows(bool includeHidden = false)
     {
         var result = new List<nint>();

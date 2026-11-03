@@ -1,6 +1,9 @@
 using System.Diagnostics;
 using System.IO;
 using System.Windows;
+using System.Windows.Automation;
+using System.Windows.Automation.Peers;
+using System.Windows.Automation.Provider;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using DesktopDock.Core;
@@ -80,7 +83,7 @@ internal sealed partial class DockWindow
             Native.GetWindowRect(preview.Handle, out var bounds);
             var work = System.Windows.Forms.Screen.PrimaryScreen!.WorkingArea;
             Require(bounds.Left >= work.Left && bounds.Right <= work.Right && bounds.Top >= work.Top && bounds.Bottom <= work.Bottom, "PreviewStaysInsideWorkingArea");
-            using (var single = new WindowPreview(_ => { }))
+            using (var single = new WindowPreview(_ => { }, _ => false))
             {
                 single.Show("Example window", [windows[0]], IconService.Bitmap(iconCache[item.Target]), (bounds.Left + bounds.Right) / 2d,
                     bounds.Bottom, new() { Left = work.Left, Top = work.Top, Right = work.Right, Bottom = work.Bottom }, scale, reducedMotion: true);
@@ -136,11 +139,56 @@ internal sealed partial class DockWindow
             preview.Refresh(launcher.WindowsFor(item));
             Require(preview.Targets.Count == 5, "ClosedWindowIsRemovedWithoutStalePreview");
             Require(!launcher.ActivatePreview(item, PreviewTarget.Capture(windows[5])), "ClosedWindowCannotBeActivated");
-            if (inspect)
+            preview.WheelForChecks(-120);
+            Require(preview.Page == 1, "CloseCheckStartsOnLastPage");
+            var closing = preview.Targets.Last();
+            InvokeClose(preview, 0);
+            await WaitFor(() => !Native.IsWindow(closing.Window), "CloseButtonRequestsOnlyLastPageWindow");
+            preview.Refresh(launcher.WindowsFor(item));
+            Require(preview.Open && preview.Page == 0 && preview.Targets.Count == 4, "ClosingLastPageClampsPageAndKeepsOtherPreviews");
+            var remaining = windows.Where(Native.IsWindow).ToArray();
+            Require(!launcher.ClosePreview(item, PreviewTarget.Capture(remaining[0]) with { Process = uint.MaxValue }), "CloseRejectsReusedProcessIdentity");
+            Require(!launcher.ClosePreview(new("Other app", Path.Combine(Environment.SystemDirectory, "cmd.exe")), PreviewTarget.Capture(remaining[0])), "CloseRejectsUnassociatedWindow");
+            Require(!launcher.ClosePreview(item, PreviewTarget.Capture(Handle)) && !launcher.ClosePreview(item, closing), "CloseRejectsOwnAndDestroyedWindows");
+            int activations = 0;
+            using (var closePreview = new WindowPreview(_ => activations++, target => launcher.ClosePreview(item, target)))
             {
-                preview.InspectForChecks();
-                string pause = Path.Combine(data, "visual-inspection.pause"); File.WriteAllText(pause, "Synthetic preview fixture only.");
-                for (int i = 0; i < 9000 && File.Exists(pause); i++) await Task.Delay(100);
+                closePreview.Show("Example windows", remaining.Take(2), IconService.Bitmap(iconCache[item.Target]), (bounds.Left + bounds.Right) / 2d,
+                    bounds.Bottom, new() { Left = work.Left, Top = work.Top, Right = work.Right, Bottom = work.Bottom }, scale, reducedMotion: true);
+                Require(closePreview.CloseButtonsForChecks.Count == 2 && closePreview.CloseButtonsForChecks.All(button =>
+                    button.IsVisible && !button.Focusable && AutomationProperties.GetName(button) == "关闭窗口"), "EachCardHasAccessibleNonActivatingCloseButton");
+                int fixture = windows.IndexOf(remaining[0]);
+                string cancelFile = Path.Combine(data, "fixture-" + fixture, "cancel-close.txt");
+                try
+                {
+                    File.WriteAllText(cancelFile, "Synthetic cancellation only.");
+                    if (inspect)
+                    {
+                        closePreview.InspectForChecks();
+                        string pause = Path.Combine(data, "visual-inspection.pause"); File.WriteAllText(pause, "Synthetic close-cancellation fixture only.");
+                        for (int i = 0; i < 9000 && File.Exists(pause); i++) await Task.Delay(100);
+                        Require(closePreview.Open && activations == 0, "MouseCloseDoesNotSelectOrDismissCancelledCard");
+                        File.Delete(Path.Combine(data, "fixture-" + fixture, "close-cancelled.json"));
+                    }
+                    var handles = closePreview.SurfaceHandlesForChecks.ToArray();
+                    InvokeClose(closePreview, 0);
+                    await WaitFor(() => File.Exists(Path.Combine(data, "fixture-" + fixture, "close-cancelled.json")), "ApplicationCanCancelPreviewCloseRequest");
+                    closePreview.Refresh(remaining.Take(2));
+                    Require(closePreview.Open && closePreview.Targets.Count == 2 && closePreview.SurfaceHandlesForChecks.SequenceEqual(handles), "CancelledCloseKeepsCardAndThumbnailResources");
+                }
+                finally { File.Delete(cancelFile); }
+                Native.ShowWindowAsync(remaining[0], 6);
+                await WaitFor(() => Native.IsIconic(remaining[0]), "CloseFixtureMinimizes");
+                InvokeClose(closePreview, 0);
+                await WaitFor(() => !Native.IsWindow(remaining[0]), "CloseButtonClosesMinimizedWindow");
+                closePreview.Refresh(remaining.Take(2));
+                Require(closePreview.Open && closePreview.Targets.Single().Window == remaining[1] && closePreview.CloseButtonsForChecks.Count == 1,
+                    "ClosingOneCardRetainsTheOtherWindow");
+                InvokeClose(closePreview, 0);
+                await WaitFor(() => !Native.IsWindow(remaining[1]), "LastCloseButtonClosesItsWindow");
+                closePreview.Refresh(remaining.Take(2));
+                Require(!closePreview.Open && closePreview.ThumbnailCount == 0 && !Native.IsWindowVisible(closePreview.Handle), "ClosingLastCardDismissesAndReleasesPreview");
+                Require(activations == 0 && remaining.Skip(2).All(Native.IsWindow), "CloseNeverSelectsCardOrClosesUnrelatedWindows");
             }
             hoveredIndex = -1; pointerOverForChecks = false; CheckVisibility(); await Task.Delay(500); CheckVisibility();
             Require(!preview.Open && preview.ThumbnailCount == 0 && !preview.Animating, "LeavingClosesAndReleasesAllPreviewResources");
@@ -154,5 +202,11 @@ internal sealed partial class DockWindow
             foreach (var process in probes) process.Dispose();
         }
         return checks;
+    }
+
+    private static void InvokeClose(WindowPreview preview, int index)
+    {
+        var peer = new ButtonAutomationPeer(preview.CloseButtonsForChecks[index]);
+        ((IInvokeProvider)peer.GetPattern(PatternInterface.Invoke)).Invoke();
     }
 }

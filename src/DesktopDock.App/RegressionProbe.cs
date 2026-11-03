@@ -21,6 +21,11 @@ internal static class RegressionProbe
         var window = new Window { Title = "Desktop Dock · 回归检查", Background = new SolidColorBrush(Color.FromRgb(230, 235, 244)),
             WindowStartupLocation = WindowStartupLocation.Manual, Width = 1000, Height = 700, ShowInTaskbar = true };
         int resizeEvents = 0;
+        window.Closing += (_, e) =>
+        {
+            if (!File.Exists(Path.Combine(data, "cancel-close.txt"))) return;
+            e.Cancel = true; File.WriteAllText(Path.Combine(data, "close-cancelled.json"), "{\"Cancelled\":true}");
+        };
         // Cooperative test processes explicitly permit their parent to regain foreground.
         window.Activated += (_, _) => { if (allowForegroundProcess != 0) Native.AllowSetForegroundWindow(allowForegroundProcess); };
         void ApplyMode(string current)

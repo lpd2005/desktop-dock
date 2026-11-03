@@ -36,6 +36,12 @@ internal sealed partial class DockWindow
                         AcknowledgeAttention(entries[previewIndex]);
                         NoteInteraction(); appStatesDirty = occlusionDirty = true;
                         previewHover.Reset(); previewIndex = -1;
+                    }, target =>
+                    {
+                        if (!IsPinnedIndex(previewIndex)) return false;
+                        bool sent = launcher.ClosePreview(entries[previewIndex], target);
+                        NoteInteraction(); appStatesDirty = occlusionDirty = true;
+                        return sent;
                     });
                     var slot = geometry.Slots[requested];
                     var work = System.Windows.Forms.Screen.PrimaryScreen!.WorkingArea;

@@ -2,6 +2,8 @@ using System.Diagnostics;
 using System.Text;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Automation;
+using System.Windows.Data;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Effects;
@@ -30,7 +32,10 @@ internal sealed class WindowPreview : IDisposable
     private readonly List<DwmPreviewSurface> surfaces = [];
     private readonly List<(Border Area, DwmPreviewSurface Surface)> placements = [];
     private readonly List<(TextBlock Label, PreviewTarget Target)> titles = [];
+    private readonly List<Button> closeButtons = [];
     private readonly Action<PreviewTarget> activate;
+    private readonly Func<PreviewTarget, bool> close;
+    private static readonly ControlTemplate closeTemplate = CreateCloseTemplate();
     private readonly TimedTransition fade = new();
     private readonly AnimationClock animation;
     private readonly Stopwatch clock = Stopwatch.StartNew();
@@ -62,6 +67,7 @@ internal sealed class WindowPreview : IDisposable
     }
     internal IReadOnlyList<PreviewTarget> Targets => targets;
     internal IReadOnlyList<nint> SurfaceHandlesForChecks => surfaces.Select(x => x.Handle).ToArray();
+    internal IReadOnlyList<Button> CloseButtonsForChecks => closeButtons;
     internal void WheelForChecks(int delta) => TurnWheel(delta);
     internal void InspectForChecks()
     {
@@ -70,9 +76,9 @@ internal sealed class WindowPreview : IDisposable
         Native.SetWindowLongPtr(Handle, -20, new((style & ~0x80L) | 0x40000));
     }
 
-    public WindowPreview(Action<PreviewTarget> activate)
+    public WindowPreview(Action<PreviewTarget> activate, Func<PreviewTarget, bool> close)
     {
-        this.activate = activate;
+        this.activate = activate; this.close = close;
         window = new Window
         {
             Title = "Desktop Dock · 窗口预览", WindowStyle = WindowStyle.None, ResizeMode = ResizeMode.NoResize,
@@ -145,6 +151,12 @@ internal sealed class WindowPreview : IDisposable
             var card = new PreviewCard(frame); frame.Background = card.Background; frame.BorderBrush = card.Outline; cards.Add(card);
             var title = new StringBuilder(512); Native.GetWindowText(target.Window, title, title.Capacity);
             var titleRow = new DockPanel { Height = WindowPreviewLayout.Title };
+            var closeButton = new Button { Content = "×", Width = 28, Height = 28, FontSize = 21, Padding = new(0, 0, 0, 2),
+                Foreground = Ink, Background = Brushes.Transparent, BorderThickness = new(0), Template = closeTemplate,
+                Focusable = false, IsTabStop = false, ToolTip = "关闭窗口", Cursor = System.Windows.Input.Cursors.Hand };
+            AutomationProperties.SetName(closeButton, "关闭窗口");
+            closeButton.Click += (_, e) => { Close(target); e.Handled = true; };
+            closeButtons.Add(closeButton); DockPanel.SetDock(closeButton, Dock.Right); titleRow.Children.Add(closeButton);
             titleRow.Children.Add(new Image { Source = icon, Width = 16, Height = 16, Margin = new(0, 0, 7, 0) });
             var text = FeatureUi.Text(title.Length > 0 ? title.ToString() : appName, 12, Ink); text.TextTrimming = TextTrimming.CharacterEllipsis;
             titles.Add((text, target));
@@ -157,12 +169,17 @@ internal sealed class WindowPreview : IDisposable
                 Cursor = System.Windows.Input.Cursors.Hand };
             column.Children.Add(area);
             Point? pressedAt = null;
-            frame.MouseLeftButtonDown += (_, e) => pressedAt = e.GetPosition(frame);
+            closeButton.PreviewMouseLeftButtonDown += (_, _) => pressedAt = null;
+            frame.MouseLeftButtonDown += (_, e) =>
+            {
+                pressedAt = closeButton.IsMouseOver || closeButton.IsMouseCaptureWithin ? null : e.GetPosition(frame);
+            };
             frame.MouseLeave += (_, _) => { pressedAt = null; QueueHover(); };
             frame.MouseLeftButtonUp += (_, e) =>
             {
                 var released = e.GetPosition(frame);
-                if (pressedAt is Point pressed && !DockReorder.Moved(released.X - pressed.X, released.Y - pressed.Y)) Activate(target);
+                if (!closeButton.IsMouseOver && !closeButton.IsMouseCaptureWithin && pressedAt is Point pressed
+                    && !DockReorder.Moved(released.X - pressed.X, released.Y - pressed.Y)) Activate(target);
                 pressedAt = null; e.Handled = true;
             };
             row.Children.Add(frame);
@@ -184,6 +201,30 @@ internal sealed class WindowPreview : IDisposable
         var button = FeatureUi.Button(title, () => ChangePage(direction)); button.Background = Brushes.Transparent; button.Foreground = Ink;
         button.Padding = new(8, 0, 8, 1);
         button.Margin = new(4, 0, 4, 0); button.FontSize = 19; button.Focusable = false; return button;
+    }
+    private static ControlTemplate CreateCloseTemplate()
+    {
+        var border = new FrameworkElementFactory(typeof(Border), "Chrome");
+        border.SetValue(Border.CornerRadiusProperty, new CornerRadius(5));
+        border.SetBinding(Border.BackgroundProperty, new Binding("Background") { RelativeSource = new(RelativeSourceMode.TemplatedParent) });
+        border.SetBinding(Border.PaddingProperty, new Binding("Padding") { RelativeSource = new(RelativeSourceMode.TemplatedParent) });
+        var content = new FrameworkElementFactory(typeof(ContentPresenter));
+        content.SetValue(ContentPresenter.HorizontalAlignmentProperty, HorizontalAlignment.Center);
+        content.SetValue(ContentPresenter.VerticalAlignmentProperty, VerticalAlignment.Center); border.AppendChild(content);
+        var template = new ControlTemplate(typeof(Button)) { VisualTree = border };
+        foreach (var (property, color) in new[] { (UIElement.IsMouseOverProperty, Color.FromRgb(211, 55, 65)), (Button.IsPressedProperty, Color.FromRgb(173, 35, 45)) })
+        {
+            var trigger = new Trigger { Property = property, Value = true };
+            trigger.Setters.Add(new Setter(Control.BackgroundProperty, new SolidColorBrush(color)));
+            trigger.Setters.Add(new Setter(Control.ForegroundProperty, Brushes.White)); template.Triggers.Add(trigger);
+        }
+        return template;
+    }
+    private void Close(PreviewTarget target)
+    {
+        if (!Open || !targets.Contains(target) || !target.Valid) return;
+        // Wait for the application's decision; a save prompt or cancellation keeps its card.
+        close(target);
     }
     private void TurnWheel(int delta)
     {
@@ -291,7 +332,7 @@ internal sealed class WindowPreview : IDisposable
         card.Background.Color = Blend(RestColor, HoverColor, card.Highlight.Value);
         card.Outline.Color = Blend(RestColor, HoverOutline, card.Highlight.Value);
     }
-    private void ClearSurfaces() { foreach (var surface in surfaces) surface.Dispose(); surfaces.Clear(); placements.Clear(); cards.Clear(); hoveredCard = -1; }
+    private void ClearSurfaces() { foreach (var surface in surfaces) surface.Dispose(); surfaces.Clear(); placements.Clear(); cards.Clear(); closeButtons.Clear(); hoveredCard = -1; }
     private void FinishHide() { ClearSurfaces(); window.Hide(); root.Children.Clear(); titles.Clear(); targets = []; icon = null; }
     public void Dispose()
     {
