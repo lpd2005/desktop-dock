@@ -13,7 +13,7 @@ internal static class Program
         string data = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "DesktopDock");
         int dataIndex = Array.IndexOf(args, "--data-dir");
         if (dataIndex >= 0 && dataIndex + 1 < args.Length) data = Path.GetFullPath(args[dataIndex + 1]);
-        bool automated = args.Any(x => x is "--smoke-test" or "--drag-test" or "--click-hover-test" or "--browser-window-test" or "--feature-test" or "--window-preview-test" or "--distribution-test" or "--environment-test" or "--attention-test");
+        bool automated = args.Any(x => x is "--smoke-test" or "--drag-test" or "--click-hover-test" or "--browser-window-test" or "--feature-test" or "--window-preview-test" or "--distribution-test" or "--environment-test" or "--attention-test" or "--spectrum-test");
         bool performance = args.Contains("--performance-run");
         automated |= performance;
         bool preview = args.Contains("--preview") || automated;
@@ -90,7 +90,7 @@ internal static class Program
             };
             desktop.Recover();
             TaskbarRecovery.Restore(data);
-            controller = new(application, data, desktop, preview, args.Contains("--stress"), showWidgets: !automated, enableAttention: !automated || args.Contains("--attention-test"));
+            controller = new(application, data, desktop, preview, args.Contains("--stress"), showWidgets: !automated, enableAttention: !automated || args.Contains("--attention-test"), enableAudioChecks: args.Contains("--spectrum-test"));
             application.Startup += async (_, _) =>
             {
                 if (args.Contains("--startup"))
@@ -112,6 +112,7 @@ internal static class Program
                 if (args.Contains("--distribution-test")) await controller.RunDistributionTest();
                 if (args.Contains("--environment-test")) await controller.RunEnvironmentTest();
                 if (args.Contains("--attention-test")) await controller.RunAttentionTest(args.Contains("--with-taskbar"));
+                if (args.Contains("--spectrum-test")) await controller.RunSpectrumTest(args.Contains("--inspect-spectrum"));
                 if (performanceOptions is not null) await controller.RunPerformance(performanceOptions);
             };
             return application.Run();

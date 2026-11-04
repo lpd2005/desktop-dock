@@ -27,7 +27,7 @@ internal sealed partial class Controller : IDisposable
     private bool recoveryRequired, storageNoticeQueued;
     private string? storageMessage;
 
-    public Controller(System.Windows.Application application, string data, DesktopIcons desktop, bool preview, bool stress, bool showWidgets = true, bool enableAttention = true)
+    public Controller(System.Windows.Application application, string data, DesktopIcons desktop, bool preview, bool stress, bool showWidgets = true, bool enableAttention = true, bool enableAudioChecks = false)
     {
         this.application = application; this.data = data; this.desktop = desktop; this.preview = preview;
         this.showWidgets = showWidgets;
@@ -63,7 +63,7 @@ internal sealed partial class Controller : IDisposable
             settingsHandle: () => settingsWindow is null ? 0 : new System.Windows.Interop.WindowInteropHelper(settingsWindow).Handle,
             toggleApplications: ToggleApplications,
             applicationsHandle: () => desktopPanel is null ? 0 : new System.Windows.Interop.WindowInteropHelper(desktopPanel).Handle,
-            applicationsOpen: () => desktopPanel?.Open == true, attentionAllowed: enableAttention);
+            applicationsOpen: () => desktopPanel?.Open == true, attentionAllowed: enableAttention, audioAllowed: !preview || enableAudioChecks);
         widgets = new(settings, () => { Save(); settingsWindow?.RefreshWidgets(); }, data, network: !preview);
         dock.RestoreTaskbarRequested = RestoreTaskbar;
         brandIcon = AppBrand.TrayIcon();
@@ -172,7 +172,7 @@ internal sealed partial class Controller : IDisposable
             StartupRegistration? startup = !preview && string.Equals(Path.GetFileName(Environment.ProcessPath), "DesktopDock.exe", StringComparison.OrdinalIgnoreCase)
                 ? new(Environment.ProcessPath!) : null;
             settingsWindow = new(settings, Apply, () => { Save(); _ = dock.LoadIcons(); }, Quit, taskbar,
-                new SystemSettingsPage(settings, updates, startup, Save, Quit), dock.AttentionAvailable, dock.SettingsIcon);
+                new SystemSettingsPage(settings, updates, startup, Save, Quit), dock.AttentionAvailable, dock.SettingsIcon, dock.Spectrum);
             settingsWindow.Closed += (_, _) => { settingsWindow = null; dock.RefreshOcclusion(); };
             settingsWindow.SetStorageNotice(storageMessage, recoveryRequired ? "确认恢复并保存" : "重试保存", recoveryRequired ? RecoverSettings : RetrySave);
             settingsWindow.Show();

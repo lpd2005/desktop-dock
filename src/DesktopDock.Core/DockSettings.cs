@@ -22,6 +22,7 @@ public sealed class DockSettings
     public List<DockItem> Items { get; set; } = [];
     public List<DesktopGroup> DesktopGroups { get; set; } = [];
     public WidgetOptions Widgets { get; set; } = new();
+    public SpectrumOptions Spectrum { get; set; } = new();
 
     public void Normalize()
     {
@@ -32,5 +33,6 @@ public sealed class DockSettings
             .DistinctBy(x => (x.Target.ToUpperInvariant(), x.Arguments)).Take(40).ToList();
         DesktopGroups = DesktopLibrary.NormalizeGroups(DesktopGroups);
         Widgets ??= new(); Widgets.Normalize();
+        Spectrum ??= new(); Spectrum.Normalize();
     }
 }

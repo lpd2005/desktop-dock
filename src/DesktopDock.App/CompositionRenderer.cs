@@ -34,6 +34,7 @@ internal sealed class CompositionRenderer : IDisposable
     private readonly CompositionRoundedRectangleGeometry placeholderGeometry;
     private bool disposed;
     private bool reducedMotion;
+    internal SpectrumVisual Spectrum { get; }
     private readonly Stopwatch feedbackTime = Stopwatch.StartNew();
 
     public bool HardwareRendering { get; }
@@ -132,6 +133,7 @@ internal sealed class CompositionRenderer : IDisposable
         root.Children.InsertAtTop(row);
         root.Children.InsertAtTop(indicatorRow);
         root.Children.InsertAtTop(insertion);
+        Spectrum = new(compositor, root);
     }
 
     public void SetTheme(DockSettings settings)
@@ -418,6 +420,7 @@ internal sealed class CompositionRenderer : IDisposable
         if (disposed) return;
         disposed = true;
         target.Root = null;
+        Spectrum.Dispose();
         ClearIcons();
         attentionPulse.Dispose(); attentionRow.Dispose();
         root.Dispose(); target.Dispose(); graphics.Dispose(); d2d.Dispose(); d3d.Dispose(); compositor.Dispose();

@@ -8,6 +8,21 @@ namespace DesktopDock.App;
 
 internal sealed partial class Controller
 {
+    public async Task RunSpectrumTest(bool inspect)
+    {
+        dock.UseOcclusionWindowsForChecks(() => []);
+        if (inspect)
+        {
+            OpenSettings();
+            settingsWindow!.ShowInTaskbar = true; settingsWindow.Title = "Desktop Dock · 音乐频谱验证";
+            nint fixtureWindow = new System.Windows.Interop.WindowInteropHelper(settingsWindow).Handle;
+            long fixtureStyle = Native.GetWindowLongPtr(fixtureWindow, -20).ToInt64();
+            Native.SetWindowLongPtr(fixtureWindow, -20, new((fixtureStyle | 0x40000L) & ~0x80L));
+        }
+        var checks = await dock.CheckSpectrum(Path.Combine(data, "spectrum-checks"), inspect);
+        File.WriteAllText(Path.Combine(data, "spectrum-report.json"), JsonSerializer.Serialize(checks, new JsonSerializerOptions { WriteIndented = true }));
+        Quit();
+    }
     public async Task RunEnvironmentTest()
     {
         dock.UseOcclusionWindowsForChecks(() => []);

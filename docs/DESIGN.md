@@ -1,6 +1,16 @@
 # Dock 交互与当前实现
 
-当前源码以 0.1.0-preview.30 为准，公开测试版为 0.1.0-preview.28。preview.2 的启动动效和窗口位置调整已按用户要求移除。
+当前源码以 0.1.0-preview.31 为准，公开测试版为 0.1.0-preview.28。preview.2 的启动动效和窗口位置调整已按用户要求移除。
+
+## 音乐频谱
+
+preview.31 的音乐频谱默认关闭。在现有合成树中预建至多 48 根白色圆角线段，根据 Dock 宽度选用 8–48 根；基线按未悬停布局与最大放大范围固定，不随鼠标波形移动。高度为 16–80 个逻辑像素，必要时增加绘制窗口的上方空间，原图标屏幕基线和输入区域保持不变。频谱不加入命中检测、遮挡判断或底边触发区域。
+
+[LoopbackSpectrum.cs](../src/DesktopDock.App/LoopbackSpectrum.cs) 使用固定版本 [NAudio.Wasapi](https://www.nuget.org/packages/NAudio.Wasapi/3.3.0) 的事件驱动 WASAPI 共享回环接口，以 48 kHz 双声道浮点格式读取默认多媒体输出。没有麦克风采集、音频文件写入或上传；所有系统混音均可能驱动线段，无法保证只响应音乐。独占或受保护内容的限制见 [Windows 回环说明](https://learn.microsoft.com/en-us/windows/win32/coreaudio/loopback-recording)。设备通知只唤醒后台所有者，采集和 COM 对象的创建、销毁串行处理；设备缺失时退避重试，不在通知锁或 UI 线程中清理设备。
+
+[SpectrumAnalyzer.cs](../src/DesktopDock.Core/SpectrumAnalyzer.cs) 复用 2048 点缓冲、Hann 窗和 FFT 工作区。分别分析左右声道后合并能量，避免反相立体声抵消；按对数频段与分贝压缩映射到 48 个频带。默认最多每秒 30 次分析，节能档为 15 次；无声跳过 FFT。界面只读取最新结果，采用快速升起、缓慢回落与约一秒无声淡出。频谱使用独立的低频界面提交和合成插值，不为音频驱动图标布局时钟，也不据此宣称实际 GPU 帧率。
+
+Dock 隐藏、预览 / 菜单 / 桌面面板交互、会话暂停或减少动画时停止采集与绘制；重新显示后连接当前默认输出。无声时停止频谱绘制，仍开启的采集仅等待音频事件。十秒模拟测试不采集声音，安全预览仅允许模拟测试。开关和参数保存到现有配置，测试状态不保存。第三方许可随运行包放入 licenses，实测与未覆盖范围见 [VALIDATION.md](VALIDATION.md) 和 [PERFORMANCE.md](PERFORMANCE.md)。
 
 ## 应用提醒与资源复用
 

@@ -30,7 +30,7 @@ internal sealed class SettingsWindow : Window
     private static readonly ControlTemplate switchTemplate = CreateSwitchTemplate();
     private sealed record PinnedView(string Name, ImageSource Icon);
 
-    public SettingsWindow(DockSettings settings, Action apply, Action reload, Action quit, TaskbarEnhancement taskbar, FrameworkElement? systemPage = null, bool attentionAvailable = true, Func<DockItem, ImageSource>? iconProvider = null)
+    public SettingsWindow(DockSettings settings, Action apply, Action reload, Action quit, TaskbarEnhancement taskbar, FrameworkElement? systemPage = null, bool attentionAvailable = true, Func<DockItem, ImageSource>? iconProvider = null, DockSpectrum? spectrum = null)
     {
         this.settings = settings; this.apply = apply; this.reload = reload;
         this.iconProvider = iconProvider;
@@ -78,6 +78,21 @@ internal sealed class SettingsWindow : Window
         AddSlider(layout, "底部间距", "调整 Dock 与屏幕底边的距离", 0, 100, settings.BottomGap, v => settings.BottomGap = v);
         AddCheck(layout, "图标倒影", "保留图标下方的半高渐淡倒影", settings.Reflections, v => settings.Reflections = v);
         AddCheck(layout, "减少动画", "即时切换状态，减少视觉动效", settings.ReducedMotion, v => settings.ReducedMotion = v);
+        var music = Section(appearance, "音乐频谱");
+        AddCheck(music, "启用音乐频谱", "白色线段跟随默认扬声器 / 耳机的声音起伏", settings.Spectrum.Enabled, v => settings.Spectrum.Enabled = v);
+        AddSlider(music, "频谱高度", "线段向上伸展的最大高度", 16, 80, settings.Spectrum.Height, v => settings.Spectrum.Height = v);
+        AddSlider(music, "灵敏度", "调整轻音乐与重节奏的响应幅度", .5, 2, settings.Spectrum.Sensitivity, v => settings.Spectrum.Sensitivity = v, true);
+        AddCheck(music, "节能频谱", "目标分析 / 更新频率从每秒 30 次降低到 15 次", settings.Spectrum.EnergySaver, v => settings.Spectrum.EnergySaver = v);
+        music.Children.Add(Hint("响应音乐、视频与系统提示音；仅在本机内存分析，不使用麦克风、不保存音频。减少动画开启时暂停。"));
+        if (spectrum is not null)
+        {
+            var spectrumStatus = Hint(spectrum.Status); spectrumStatus.Margin = new(0, 10, 0, 7);
+            void RefreshSpectrumStatus() => spectrumStatus.Text = spectrum.Status;
+            spectrum.StatusChanged += RefreshSpectrumStatus;
+            Closed += (_, _) => { spectrum.StatusChanged -= RefreshSpectrumStatus; spectrum.EndTest(); };
+            music.Children.Add(spectrumStatus);
+            music.Children.Add(FeatureUi.Button("测试效果（模拟 · 10 秒 / 再点停止）", spectrum.Test));
+        }
         var behavior = Section(appearance, "显示与桌面");
         AddCheck(behavior, "自动隐藏 Dock", "移到底边停留唤出，离开后收起", settings.AutoHide, v => settings.AutoHide = v);
         AddCheck(behavior, "窗口预览", "悬停已运行应用，预览并选择窗口", settings.WindowPreviews, v => settings.WindowPreviews = v);

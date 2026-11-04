@@ -346,4 +346,5 @@ Check(ReleaseFeed.Latest(UpdateFixture("0.1.0-preview.23", digest: ""), previewV
 Check(ReleaseFeed.Latest(UpdateFixture("0.1.0-preview.23", bytes: "123"), previewVersion) is null, "Wrong asset size type is safely ignored");
 Check(ReleaseFeed.Latest(UpdateFixture("0.1.0-preview.23", bytes: ReleaseFeed.MaximumBytes + 1), previewVersion) is null, "Oversized installer is rejected");
 Check(System.Text.Json.JsonSerializer.Deserialize<DockSettings>("{}")!.AutoCheckUpdates, "Existing settings enable low frequency update checks");
+SpectrumChecks.Run(Check);
 Console.WriteLine($"PASS: {checks} geometry, persistence and interaction checks.");

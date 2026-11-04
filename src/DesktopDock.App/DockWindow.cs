@@ -15,6 +15,7 @@ internal sealed partial class DockWindow : IDisposable
     private readonly DockPresentationWindow visualSource;
     private readonly DockMotion motion;
     private readonly CompositionRenderer renderer;
+    internal DockSpectrum Spectrum { get; }
     private readonly WindowRegion region;
     private readonly DockSettings settings;
     private readonly Action openSettings, changed, recover, quit;
@@ -114,7 +115,7 @@ internal sealed partial class DockWindow : IDisposable
 
     public DockWindow(DockSettings settings, Action openSettings, Action changed, Action recover, Action quit,
         Action<nint?>? toggleSettings = null, Func<nint>? settingsHandle = null, Action? toggleApplications = null,
-        Func<nint>? applicationsHandle = null, Func<bool>? applicationsOpen = null, bool attentionAllowed = true)
+        Func<nint>? applicationsHandle = null, Func<bool>? applicationsOpen = null, bool attentionAllowed = true, bool audioAllowed = true)
     {
         this.settings = settings; this.openSettings = openSettings; this.changed = changed;
         this.recover = recover; this.quit = quit;
@@ -139,6 +140,7 @@ internal sealed partial class DockWindow : IDisposable
         region.Update([], 1); // Never expose an unshaped screen-wide input window, including during startup.
         visualSource = new();
         renderer = new(visualSource.Handle);
+        Spectrum = new(settings, renderer.Spectrum, source.Dispatcher, audioAllowed);
         motion = new(Handle, visualSource.Handle, source.Dispatcher);
         renderer.SetTheme(settings);
         animationClock = new(source.Dispatcher, () => RenderFrame(null, EventArgs.Empty));
@@ -205,6 +207,7 @@ internal sealed partial class DockWindow : IDisposable
             var nextGeometry = DockLayout.Calculate(localEntries.Length, settings.IconSize, settings.Magnification, null, width / scale, separatorBefore: nextSeparator);
             renderer.SynchronizeIcons(entries, localEntries, pixels, nextGeometry, width, height, scale);
             entries = localEntries.ToList(); separatorBefore = nextSeparator;
+            ArrangeSpectrum();
             RefreshAttention();
             occlusionDirty = appStatesDirty = true;
             RenderLayout();
@@ -247,7 +250,9 @@ internal sealed partial class DockWindow : IDisposable
         var screen = Forms.Screen.PrimaryScreen!;
         scale = Math.Max(.75f, Native.GetDpiForWindow(Handle) / 96f);
         width = screen.WorkingArea.Width;
-        height = (int)(250 * scale);
+        // Extra drawing space never becomes part of the input region or moves the icon baseline.
+        height = (int)(Math.Max(250, settings.IconSize * settings.Magnification + settings.IconSize * IconReflection.Depth * 1.8
+            + settings.Spectrum.Height + DockGeometry.Foot + 32) * scale);
         left = screen.WorkingArea.Left;
         top = screen.WorkingArea.Bottom - height - (int)(settings.BottomGap * scale);
         autoHidden = false;
@@ -255,8 +260,12 @@ internal sealed partial class DockWindow : IDisposable
         hover.Reset(0); renderer.ResetPressFeedback();
         motion.SetBounds(left, top, width, height, scale);
         RenderLayout();
+        ArrangeSpectrum();
         CheckVisibility();
     }
+
+    private void ArrangeSpectrum() => renderer.Spectrum.Arrange(SpectrumLayout.Calculate(RestGeometry,
+        width / scale, height / scale, settings.Magnification, settings.Spectrum.Height), scale);
 
     private void RenderLayout(double dt = 0)
     {
@@ -579,6 +588,7 @@ internal sealed partial class DockWindow : IDisposable
         bool wasTarget = motion.Target;
         if (!show)
         {
+            Spectrum.SetPresented(false);
             renderer.PresentAttention(false);
             blocked = cachedOccluded || !settings.AutoHide;
             autoHidden = !blocked;
@@ -596,6 +606,7 @@ internal sealed partial class DockWindow : IDisposable
         RefreshAppStates(now, force: !wasTarget);
         if (!wasTarget) RenderLayout();
         motion.Request(true, settings.ReducedMotion);
+        Spectrum.SetPresented(!previewOpen && !menuOpen && !applicationsOpen() && !dragging && !externalDrop && !shellDragging);
     }
 
     private DockAppState[] ReadAppStates()
@@ -637,6 +648,7 @@ internal sealed partial class DockWindow : IDisposable
         suspended = value;
         if (value)
         {
+            Spectrum.SetPresented(false);
             blocked = true; visibilityTimer.Stop(); visibility.Reset();
             renderer.PresentAttention(false);
             CancelInteraction(); StopRendering(); motion.Request(false, true);
@@ -848,6 +860,7 @@ internal sealed partial class DockWindow : IDisposable
         if (disposed) return;
         environment.Dispose();
         attentionHook.Dispose();
+        Spectrum.Dispose();
         CancelInteraction(); disposed = true; StopRendering(); visibilityTimer.Stop(); labelTimer.Stop(); label.IsOpen = false;
         foreach (nint hook in hooks) if (hook != 0) Native.UnhookWinEvent(hook);
         if (menuOpen) Native.EndMenu();
