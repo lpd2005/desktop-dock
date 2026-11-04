@@ -164,7 +164,20 @@ internal sealed partial class DockWindow
                     File.WriteAllText(cancelFile, "Synthetic cancellation only.");
                     if (inspect)
                     {
+                        preview.Hide(true); // Keep one visible preview for unambiguous inspection.
                         closePreview.InspectForChecks();
+                        var closeButton = closePreview.CloseButtonsForChecks[0];
+                        closeButton.MouseEnter += (_, _) =>
+                        {
+                            var chrome = (System.Windows.Controls.Border)closeButton.Template.FindName("Chrome", closeButton);
+                            var glyph = (System.Windows.Controls.TextBlock)closeButton.Template.FindName("Glyph", closeButton);
+                            File.WriteAllText(Path.Combine(data, "close-hover.json"), System.Text.Json.JsonSerializer.Serialize(new
+                            {
+                                Hovered = closeButton.IsMouseOver,
+                                Background = (chrome.Background as SolidColorBrush)?.Color.ToString(),
+                                Foreground = (glyph.Foreground as SolidColorBrush)?.Color.ToString()
+                            }));
+                        };
                         string pause = Path.Combine(data, "visual-inspection.pause"); File.WriteAllText(pause, "Synthetic close-cancellation fixture only.");
                         for (int i = 0; i < 9000 && File.Exists(pause); i++) await Task.Delay(100);
                         Require(closePreview.Open && activations == 0, "MouseCloseDoesNotSelectOrDismissCancelledCard");

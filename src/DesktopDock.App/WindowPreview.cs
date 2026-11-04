@@ -74,6 +74,7 @@ internal sealed class WindowPreview : IDisposable
         window.ShowInTaskbar = true;
         long style = Native.GetWindowLongPtr(Handle, -20).ToInt64();
         Native.SetWindowLongPtr(Handle, -20, new((style & ~0x80L) | 0x40000));
+        BuildPage(); // ShowInTaskbar may recreate the HWND; reattach its thumbnails.
     }
 
     public WindowPreview(Action<PreviewTarget> activate, Func<PreviewTarget, bool> close)
@@ -208,15 +209,18 @@ internal sealed class WindowPreview : IDisposable
         border.SetValue(Border.CornerRadiusProperty, new CornerRadius(5));
         border.SetBinding(Border.BackgroundProperty, new Binding("Background") { RelativeSource = new(RelativeSourceMode.TemplatedParent) });
         border.SetBinding(Border.PaddingProperty, new Binding("Padding") { RelativeSource = new(RelativeSourceMode.TemplatedParent) });
-        var content = new FrameworkElementFactory(typeof(ContentPresenter));
-        content.SetValue(ContentPresenter.HorizontalAlignmentProperty, HorizontalAlignment.Center);
-        content.SetValue(ContentPresenter.VerticalAlignmentProperty, VerticalAlignment.Center); border.AppendChild(content);
+        var content = new FrameworkElementFactory(typeof(TextBlock), "Glyph");
+        content.SetBinding(TextBlock.TextProperty, new Binding("Content") { RelativeSource = new(RelativeSourceMode.TemplatedParent) });
+        content.SetBinding(TextBlock.ForegroundProperty, new Binding("Foreground") { RelativeSource = new(RelativeSourceMode.TemplatedParent) });
+        content.SetBinding(TextBlock.FontSizeProperty, new Binding("FontSize") { RelativeSource = new(RelativeSourceMode.TemplatedParent) });
+        content.SetValue(FrameworkElement.HorizontalAlignmentProperty, HorizontalAlignment.Center);
+        content.SetValue(FrameworkElement.VerticalAlignmentProperty, VerticalAlignment.Center); border.AppendChild(content);
         var template = new ControlTemplate(typeof(Button)) { VisualTree = border };
         foreach (var (property, color) in new[] { (UIElement.IsMouseOverProperty, Color.FromRgb(211, 55, 65)), (Button.IsPressedProperty, Color.FromRgb(173, 35, 45)) })
         {
             var trigger = new Trigger { Property = property, Value = true };
-            trigger.Setters.Add(new Setter(Control.BackgroundProperty, new SolidColorBrush(color)));
-            trigger.Setters.Add(new Setter(Control.ForegroundProperty, Brushes.White)); template.Triggers.Add(trigger);
+            trigger.Setters.Add(new Setter(Border.BackgroundProperty, new SolidColorBrush(color), "Chrome"));
+            trigger.Setters.Add(new Setter(TextBlock.ForegroundProperty, Brushes.White, "Glyph")); template.Triggers.Add(trigger);
         }
         return template;
     }

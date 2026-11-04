@@ -53,19 +53,20 @@ internal static class TransparentUi
         }
     }
     public static Style ScrollBarStyle() => scrollBarStyle;
-    private static Style CreateScrollBarStyle()
+    public static Style LightScrollBarStyle() => CreateScrollBarStyle("#66788598");
+    private static Style CreateScrollBarStyle(string thumbColor = "#55FFFFFF")
     {
         var style = new Style(typeof(ScrollBar));
         style.Setters.Add(new Setter(FrameworkElement.WidthProperty, 6d));
         style.Setters.Add(new Setter(Control.TemplateProperty, (ControlTemplate)XamlReader.Parse("""
             <ControlTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" TargetType="ScrollBar">
-              <Track x:Name="PART_Track" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" IsDirectionReversed="True" Orientation="Vertical">
+              <Track x:Name="PART_Track" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Width="6" HorizontalAlignment="Center" IsDirectionReversed="True" Orientation="Vertical">
                 <Track.DecreaseRepeatButton><RepeatButton Command="ScrollBar.PageUpCommand" Opacity="0" Focusable="False"/></Track.DecreaseRepeatButton>
                 <Track.Thumb><Thumb><Thumb.Template><ControlTemplate TargetType="Thumb"><Border CornerRadius="3" Background="#55FFFFFF" Margin="1,0"/></ControlTemplate></Thumb.Template></Thumb></Track.Thumb>
                 <Track.IncreaseRepeatButton><RepeatButton Command="ScrollBar.PageDownCommand" Opacity="0" Focusable="False"/></Track.IncreaseRepeatButton>
               </Track>
             </ControlTemplate>
-            """)));
+            """.Replace("#55FFFFFF", thumbColor))));
         return style;
     }
 }

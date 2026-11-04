@@ -56,6 +56,14 @@ internal static class FeatureChecks
         return window.AllowsTransparency && corner[3] == 0 && surface[3] is > 0 and < 110
             && !(Native.DwmGetIntAttribute(handle, 38, out int backdrop, sizeof(int)) == 0 && backdrop == 3);
     }
+    private static bool HasWhiteSurface(Window window)
+    {
+        window.UpdateLayout();
+        var bitmap = new RenderTargetBitmap((int)Math.Ceiling(window.ActualWidth), (int)Math.Ceiling(window.ActualHeight), 96, 96, PixelFormats.Pbgra32);
+        bitmap.Render(window); byte[] pixel = new byte[4];
+        bitmap.CopyPixels(new Int32Rect(4, bitmap.PixelHeight / 2, 1, 1), pixel, 4, 0);
+        return !window.AllowsTransparency && pixel.All(x => x == 255);
+    }
     public static async Task<Dictionary<string, bool>> Run(string data, bool inspect = false)
     {
         Directory.CreateDirectory(data);
@@ -99,6 +107,13 @@ internal static class FeatureChecks
             nint handle = new System.Windows.Interop.WindowInteropHelper(panel).Handle;
             Require((Native.GetWindowLongPtr(handle, -20).ToInt64() & (0x80 | 0x40000)) == 0x80, "DesktopPanelExcludedFromAltTab");
             panel.FilterForChecks("Example 02"); Require(panel.FilteredCountForChecks == 1 && panel.PageForChecks == 0, "SearchFiltersAndResetsPage");
+            var clearSearch = Children<Button>(panel).Single(x => x.ToolTip as string == "清空搜索");
+            clearSearch.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Require(panel.FilteredCountForChecks == 54 && panel.PageForChecks == 0, "ClearSearchRestoresDesktopEntries");
+            panel.FilterForChecks("No matching example"); panel.UpdateLayout();
+            Require(panel.FilteredCountForChecks == 0 && Children<TextBlock>(panel).Any(x => x.Text == "没有找到匹配项目" && x.IsVisible), "EmptySearchShowsReadableEmptyState");
+            Capture(panel, Path.Combine(data, "desktop-panel-empty.png"));
+            panel.FilterForChecks("Example 02");
             var tile = Children<Button>(panel).Single(x => x.ToolTip as string == "Example 02.txt");
             var pin = (MenuItem)tile.ContextMenu.Items[0]; pin.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
             Require(pinned == 1, "PanelPinMenuUsesProductAction");
@@ -140,7 +155,7 @@ internal static class FeatureChecks
             Require(panel.Opacity > 0, "PanelReversePreservesCurrentOpacity");
             await reversed; await Task.Delay(200);
             Require(panel.Open && panel.Opacity == 1, "PanelReversesDismissWithoutLateHide");
-            Require(HasTransparentSurface(panel), "PanelHasTransparentPixelsWithoutAcrylicBackdrop");
+            Require(HasWhiteSurface(panel), "PanelRendersOpaqueWhiteBackground");
             await Inspect(panel);
             var interruptedPresentation = panel.Present(); panel.DismissImmediately(); await interruptedPresentation;
             Require(!panel.IsVisible && !panel.Open, "EnvironmentDismissCancelsPendingPanelPresentation");
