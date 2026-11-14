@@ -14,6 +14,7 @@ public sealed class DockSettings
     public bool AutoHide { get; set; }
     public bool ReducedMotion { get; set; }
     public bool WindowPreviews { get; set; } = true;
+    public bool DesktopHotkey { get; set; } = true;
     public bool AutoCheckUpdates { get; set; } = true;
     public bool AppAttention { get; set; } = true;
     public bool TaskbarEnhancement { get; set; }

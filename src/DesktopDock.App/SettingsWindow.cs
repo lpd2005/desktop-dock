@@ -30,7 +30,7 @@ internal sealed class SettingsWindow : Window
     private static readonly ControlTemplate switchTemplate = CreateSwitchTemplate();
     private sealed record PinnedView(string Name, ImageSource Icon);
 
-    public SettingsWindow(DockSettings settings, Action apply, Action reload, Action quit, TaskbarEnhancement taskbar, FrameworkElement? systemPage = null, bool attentionAvailable = true, Func<DockItem, ImageSource>? iconProvider = null, DockSpectrum? spectrum = null)
+    public SettingsWindow(DockSettings settings, Action apply, Action reload, Action quit, TaskbarEnhancement taskbar, FrameworkElement? systemPage = null, bool attentionAvailable = true, Func<DockItem, ImageSource>? iconProvider = null, DockSpectrum? spectrum = null, DesktopShortcut? desktopShortcut = null)
     {
         this.settings = settings; this.apply = apply; this.reload = reload;
         this.iconProvider = iconProvider;
@@ -94,6 +94,15 @@ internal sealed class SettingsWindow : Window
             music.Children.Add(FeatureUi.Button("测试效果（模拟 · 10 秒 / 再点停止）", spectrum.Test));
         }
         var behavior = Section(appearance, "显示与桌面");
+        AddCheck(behavior, "返回桌面快捷键", DesktopShortcut.Keys + " · 最小化其他应用窗口", settings.DesktopHotkey, v => settings.DesktopHotkey = v);
+        if (desktopShortcut is not null)
+        {
+            var shortcutStatus = Hint(desktopShortcut.Status); shortcutStatus.Margin = new(0, 0, 0, 12);
+            void RefreshShortcutStatus() => shortcutStatus.Text = desktopShortcut.Status;
+            desktopShortcut.StatusChanged += RefreshShortcutStatus;
+            Closed += (_, _) => desktopShortcut.StatusChanged -= RefreshShortcutStatus;
+            behavior.Children.Add(shortcutStatus);
+        }
         AddCheck(behavior, "自动隐藏 Dock", "移到底边停留唤出，离开后收起", settings.AutoHide, v => settings.AutoHide = v);
         AddCheck(behavior, "窗口预览", "悬停已运行应用，预览并选择窗口", settings.WindowPreviews, v => settings.WindowPreviews = v);
         var attention = AddCheck(behavior, "应用消息提醒", attentionAvailable ? "跟随系统任务栏闪烁请求，唤出约 3 秒，点击清除" : "当前环境无法接收系统任务栏闪烁通知", settings.AppAttention, v => settings.AppAttention = v);

@@ -1,6 +1,12 @@
 # Dock 交互与当前实现
 
-当前源码以 0.1.0-preview.31 为准，公开测试版为 0.1.0-preview.28。preview.2 的启动动效和窗口位置调整已按用户要求移除。
+当前源码以 0.1.0-preview.32 为准，公开测试版为 0.1.0-preview.28。preview.2 的启动动效和窗口位置调整已按用户要求移除。
+
+## 返回桌面快捷键
+
+preview.32 默认启用 Ctrl + Alt + Shift + D，通过 [RegisterHotKey](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-registerhotkey) 在现有 Dock HWND 上接收 WM_HOTKEY，使用 MOD_NOREPEAT 限制键盘自动重复。Dock 隐藏时仍能收到消息；会话暂停、关闭开关或安全预览不执行动作，退出时注销。注册冲突在设置中提示，关闭再开启可重试；不注册 Windows 键组合、不安装键盘钩子、不增加轮询计时器。
+
+动作调用 [Shell.MinimizeAll](https://learn.microsoft.com/en-us/windows/win32/shell/shell-minimizeall)，由 Windows 最小化普通窗口，保留应用进程；连续触发仍执行最小化，不切换恢复窗口。操作前取消 Dock 交互、关闭预览和菜单、隐藏桌面面板，并显式最小化可能不受 Shell 操作覆盖的工具样式设置窗口。COM 对象按需创建并释放，失败时在快捷键状态处提示，不导致应用退出。普通 Dock 遮挡与底边唤出继续使用原有规则。
 
 ## 音乐频谱
 

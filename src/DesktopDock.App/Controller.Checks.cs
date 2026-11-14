@@ -8,6 +8,47 @@ namespace DesktopDock.App;
 
 internal sealed partial class Controller
 {
+    public async Task RunDesktopShortcutTest(bool inspect)
+    {
+        string fixture = Path.Combine(data, "desktop-shortcut-checks");
+        var checks = await DesktopShortcutChecks.Run(fixture, inspect);
+        void Require(bool value, string name) { checks[name] = value; if (!value) throw new InvalidOperationException("Return desktop: " + name); }
+        dock.UseOcclusionWindowsForChecks(() => []);
+        string firstData = Path.Combine(fixture, "normal"), secondData = Path.Combine(fixture, "maximized");
+        using var first = RegressionProbe.Start("normal", firstData);
+        using var second = RegressionProbe.Start("maximized", secondData);
+        bool minimized = false;
+        try
+        {
+            await RegressionProbe.WaitReady(first, firstData); await RegressionProbe.WaitReady(second, secondData);
+            nint firstWindow = RegressionProbe.Handle(firstData), secondWindow = RegressionProbe.Handle(secondData);
+            OpenSettings();
+            Require(!Native.IsIconic(firstWindow) && !Native.IsIconic(secondWindow), "FixtureWindowsStartVisible");
+            minimized = ReturnToDesktop(); Require(minimized, "WindowsShellAcceptsMinimizeAll");
+            for (int i = 0; i < 80 && (!Native.IsIconic(firstWindow) || !Native.IsIconic(secondWindow)); i++) await Task.Delay(40);
+            Require(Native.IsIconic(firstWindow) && Native.IsIconic(secondWindow), "NormalAndMaximizedWindowsMinimizeThroughShell");
+            Require(settingsWindow?.WindowState == WindowState.Minimized, "OwnToolSettingsWindowAlsoMinimizes");
+            Require(!first.HasExited && !second.HasExited, "ReturningToDesktopLeavesApplicationsRunning");
+        }
+        finally
+        {
+            // Undo this one integration operation so the user's pre-test windows return immediately.
+            if (minimized)
+            {
+                object? shell = null;
+                try
+                {
+                    shell = Activator.CreateInstance(Type.GetTypeFromCLSID(new Guid("13709620-C279-11CE-A49E-444553540000"))!);
+                    ((dynamic)shell!).UndoMinimizeAll(); await Task.Delay(300);
+                }
+                finally { if (shell is not null) System.Runtime.InteropServices.Marshal.FinalReleaseComObject(shell); }
+            }
+            settingsWindow?.Close(); RegressionProbe.Close(first); RegressionProbe.Close(second);
+        }
+        File.WriteAllText(Path.Combine(data, "desktop-shortcut-report.json"), JsonSerializer.Serialize(checks, new JsonSerializerOptions { WriteIndented = true }));
+        Quit();
+    }
+
     public async Task RunSpectrumTest(bool inspect)
     {
         dock.UseOcclusionWindowsForChecks(() => []);

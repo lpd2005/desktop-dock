@@ -19,6 +19,7 @@ internal sealed partial class Controller : IDisposable
     private readonly TaskbarEnhancement taskbar;
     private readonly DesktopWidgets widgets;
     private readonly UpdateService updates;
+    private readonly DesktopShortcut desktopShortcut;
     private DesktopPanel? desktopPanel;
     private readonly System.Drawing.Icon brandIcon;
     private (bool Enabled, bool AutoHide, bool Glass, bool Light, bool ReducedMotion)? taskbarConfiguration;
@@ -64,6 +65,7 @@ internal sealed partial class Controller : IDisposable
             toggleApplications: ToggleApplications,
             applicationsHandle: () => desktopPanel is null ? 0 : new System.Windows.Interop.WindowInteropHelper(desktopPanel).Handle,
             applicationsOpen: () => desktopPanel?.Open == true, attentionAllowed: enableAttention, audioAllowed: !preview || enableAudioChecks);
+        desktopShortcut = new(System.Windows.Interop.HwndSource.FromHwnd(dock.Handle), ReturnToDesktop, runtimeAllowed: !preview);
         widgets = new(settings, () => { Save(); settingsWindow?.RefreshWidgets(); }, data, network: !preview);
         dock.RestoreTaskbarRequested = RestoreTaskbar;
         brandIcon = AppBrand.TrayIcon();
@@ -90,6 +92,7 @@ internal sealed partial class Controller : IDisposable
         };
         dock.SuspensionChanged = value =>
         {
+            desktopShortcut.SetSuspended(value);
             if (value) desktopPanel?.DismissImmediately();
             widgets.SetSuspended(value); taskbar.SetSuspended(value);
         };
@@ -98,6 +101,7 @@ internal sealed partial class Controller : IDisposable
     public async Task Start()
     {
         await dock.LoadIcons();
+        desktopShortcut.Apply(settings.DesktopHotkey && !recoveryRequired);
         desktop.Apply(!recoveryRequired && settings.HideDesktopIcons);
         if (!recoveryRequired) { ApplyTaskbar(); if (showWidgets) widgets.Apply(); }
         else if (!preview) OpenSettings();
@@ -139,6 +143,7 @@ internal sealed partial class Controller : IDisposable
     }
     private void ApplyRuntime()
     {
+        desktopShortcut.Apply(settings.DesktopHotkey && !recoveryRequired);
         desktop.Apply(!recoveryRequired && settings.HideDesktopIcons); dock.ApplySettings();
         if (!recoveryRequired) { ApplyTaskbar(); if (showWidgets) widgets.Apply(); }
         else { taskbar.Stop(); taskbarConfiguration = null; }
@@ -172,7 +177,7 @@ internal sealed partial class Controller : IDisposable
             StartupRegistration? startup = !preview && string.Equals(Path.GetFileName(Environment.ProcessPath), "DesktopDock.exe", StringComparison.OrdinalIgnoreCase)
                 ? new(Environment.ProcessPath!) : null;
             settingsWindow = new(settings, Apply, () => { Save(); _ = dock.LoadIcons(); }, Quit, taskbar,
-                new SystemSettingsPage(settings, updates, startup, Save, Quit), dock.AttentionAvailable, dock.SettingsIcon, dock.Spectrum);
+                new SystemSettingsPage(settings, updates, startup, Save, Quit), dock.AttentionAvailable, dock.SettingsIcon, dock.Spectrum, desktopShortcut);
             settingsWindow.Closed += (_, _) => { settingsWindow = null; dock.RefreshOcclusion(); };
             settingsWindow.SetStorageNotice(storageMessage, recoveryRequired ? "确认恢复并保存" : "重试保存", recoveryRequired ? RecoverSettings : RetrySave);
             settingsWindow.Show();
@@ -202,11 +207,20 @@ internal sealed partial class Controller : IDisposable
     }
     private void Quit() { taskbar.Stop(); desktop.Restore(); application.Shutdown(); }
 
+    private bool ReturnToDesktop()
+    {
+        if (disposed) return false;
+        dock.DismissForDesktop(); desktopPanel?.DismissImmediately();
+        // Tool windows are not always included in Shell.MinimizeAll, so minimize our settings explicitly.
+        if (settingsWindow?.IsVisible == true) settingsWindow.WindowState = WindowState.Minimized;
+        return ShellDesktop.MinimizeAll();
+    }
+
     public void Dispose()
     {
         if (disposed) return;
         disposed = true; tray.Visible = false; tray.ContextMenuStrip?.Dispose(); tray.Dispose();
-        updates.Dispose(); taskbar.Dispose(); dock.Dispose(); desktop.Restore();
+        updates.Dispose(); taskbar.Dispose(); desktopShortcut.Dispose(); dock.Dispose(); desktop.Restore();
         desktopPanel?.DisposeWindow(); widgets.Dispose(); brandIcon.Dispose();
     }
 }
