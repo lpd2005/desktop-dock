@@ -796,13 +796,6 @@ internal sealed partial class DockWindow : IDisposable
         ghostNormalPixels = ghostRemovePixels = null; ghostRemoving = false;
         if (!disposed && render) RenderLayout();
     }
-    internal void DismissForDesktop()
-    {
-        CancelInteraction();
-        if (menuOpen) Native.EndMenu();
-        labelTimer.Stop(); label.IsOpen = false; hoveredIndex = -1;
-        occlusionDirty = appStatesDirty = true;
-    }
     private void CancelInteraction()
     {
         CloseWindowPreview();

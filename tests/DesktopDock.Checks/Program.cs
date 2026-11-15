@@ -347,6 +347,11 @@ Check(ReleaseFeed.Latest(UpdateFixture("0.1.0-preview.23", bytes: "123"), previe
 Check(ReleaseFeed.Latest(UpdateFixture("0.1.0-preview.23", bytes: ReleaseFeed.MaximumBytes + 1), previewVersion) is null, "Oversized installer is rejected");
 Check(System.Text.Json.JsonSerializer.Deserialize<DockSettings>("{}")!.AutoCheckUpdates, "Existing settings enable low frequency update checks");
 SpectrumChecks.Run(Check);
-Check(System.Text.Json.JsonSerializer.Deserialize<DockSettings>("{}")!.DesktopHotkey, "Existing configurations enable the desktop shortcut");
-Check(!System.Text.Json.JsonSerializer.Deserialize<DockSettings>("{\"DesktopHotkey\":false}")!.DesktopHotkey, "Disabled desktop shortcut persists");
+foreach (bool legacyShortcut in new[] { true, false })
+{
+    var legacy = System.Text.Json.JsonSerializer.Deserialize<DockSettings>("{\"DesktopHotkey\":" + (legacyShortcut ? "true" : "false") + ",\"IconSize\":56}")!;
+    legacy.Normalize();
+    Check(legacy.IconSize == 56 && !System.Text.Json.JsonSerializer.Serialize(legacy).Contains("DesktopHotkey"),
+        "Retired shortcut settings are ignored without changing active preferences");
+}
 Console.WriteLine($"PASS: {checks} geometry, persistence and interaction checks.");

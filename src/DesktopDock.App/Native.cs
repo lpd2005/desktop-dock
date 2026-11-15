@@ -12,8 +12,6 @@ internal static class Native
     [StructLayout(LayoutKind.Sequential)] internal struct MouseTrack { public int Size, Flags; public nint Hwnd; public uint HoverTime; }
     [StructLayout(LayoutKind.Sequential)] internal struct FlashInfo { public uint Size; public nint Window; public uint Flags, Count, Timeout; }
     [DllImport("user32.dll")] internal static extern bool FlashWindowEx(ref FlashInfo info);
-    [DllImport("user32.dll", SetLastError = true)] internal static extern bool RegisterHotKey(nint hwnd, int id, uint modifiers, uint key);
-    [DllImport("user32.dll", SetLastError = true)] internal static extern bool UnregisterHotKey(nint hwnd, int id);
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     internal struct ShellFileInfo
     {
