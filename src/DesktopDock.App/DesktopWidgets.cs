@@ -58,9 +58,9 @@ internal sealed class DesktopWidgets : IDisposable
     private readonly WeatherService weatherService;
     private readonly Dictionary<string, WidgetWindow> windows = [];
     private readonly Dispatcher dispatcher;
-    private readonly DispatcherTimer clockTimer, weatherTimer;
+    private readonly DispatcherTimer clockTimer, weatherTimer, restackTimer;
     private readonly Native.WinEvent foregroundEvent;
-    private readonly nint foregroundHook;
+    private readonly List<nint> windowHooks = [];
     private CancellationTokenSource cancellation = new();
     private (bool Clock, bool Weather, bool Light, string City)? configuration;
     private TextBlock? clockText, clockDate, weatherCity, temperature, weatherDescription, weatherDetail, weatherStatus, weatherGlyph;
@@ -72,6 +72,7 @@ internal sealed class DesktopWidgets : IDisposable
     internal IReadOnlyCollection<WidgetWindow> WindowsForChecks => windows.Values;
     internal bool WeatherFetchingForChecks => fetching;
     internal bool ClockTickingForChecks => clockTimer.IsEnabled;
+    internal bool RestackPendingForChecks => restackPending || restackTimer.IsEnabled;
 
     public DesktopWidgets(DockSettings settings, Action save, string data, bool network = true, WeatherService? service = null)
     {
@@ -81,12 +82,25 @@ internal sealed class DesktopWidgets : IDisposable
         catch (Exception e) when (e is IOException or UnauthorizedAccessException or JsonException) { }
         clockTimer = new(DispatcherPriority.Background) { Interval = TimeSpan.FromSeconds(1) }; clockTimer.Tick += (_, _) => RefreshTime();
         weatherTimer = new() { Interval = TimeSpan.FromMinutes(30) }; weatherTimer.Tick += (_, _) => _ = RefreshWeather();
-        foregroundEvent = (_, _, _, _, _, _, _) =>
+        // Explorer can finish moving its desktop after the foreground notification. Coalesce
+        // those events and perform one trailing correction, never a permanent polling loop.
+        restackTimer = new(DispatcherPriority.Background) { Interval = TimeSpan.FromMilliseconds(300) };
+        restackTimer.Tick += (_, _) => { restackTimer.Stop(); Restack(); };
+        foregroundEvent = (_, eventType, window, _, _, _, _) =>
         {
-            if (disposed || restackPending) return; restackPending = true;
-            dispatcher.BeginInvoke(() => { restackPending = false; if (!disposed) Restack(); }, DispatcherPriority.Background);
+            if (disposed || suspended || windows.Count == 0 || restackPending) return;
+            if (eventType == 0x8004 && window != 0 && window != Native.GetDesktopWindow()
+                && Native.FindWindowEx(window, 0, "SHELLDLL_DefView", null) == 0) return;
+            restackPending = true;
+            dispatcher.BeginInvoke(() =>
+            {
+                restackPending = false;
+                if (disposed || suspended) return;
+                Restack(); restackTimer.Stop(); restackTimer.Start();
+            }, DispatcherPriority.Background);
         };
-        foregroundHook = Native.SetWinEventHook(3, 3, 0, foregroundEvent, 0, 0, 0);
+        windowHooks.Add(Native.SetWinEventHook(3, 3, 0, foregroundEvent, 0, 0, 0));
+        windowHooks.Add(Native.SetWinEventHook(0x8004, 0x8004, 0, foregroundEvent, 0, 0, 0));
     }
     public void Apply()
     {
@@ -152,6 +166,7 @@ internal sealed class DesktopWidgets : IDisposable
         suspended = value;
         if (value)
         {
+            restackTimer.Stop();
             clockTimer.Stop(); weatherTimer.Stop(); weatherGeneration++; fetching = false;
             cancellation.Cancel(); cancellation.Dispose(); cancellation = new();
             foreach (var window in windows.Values) window.Hide();
@@ -233,8 +248,17 @@ internal sealed class DesktopWidgets : IDisposable
     {
         if (disposed || suspended || windows.Count == 0) return;
         nint after = 0;
+        nint desktop = 0;
+        int index = 0, afterIndex = -1, desktopIndex = int.MaxValue;
+        var positions = new Dictionary<nint, int>();
         Native.EnumWindows((window, _) =>
         {
+            int current = index++;
+            if (windows.Values.Any(x => x.Handle == window)) { positions[window] = current; return true; }
+            // Show Desktop raises Explorer's desktop above ordinary windows without necessarily
+            // minimizing or cloaking them. Only applications ABOVE that desktop can cover widgets.
+            if (Native.FindWindowEx(window, 0, "SHELLDLL_DefView", null) != 0) { desktop = window; desktopIndex = Math.Min(desktopIndex, current); }
+            if (current >= desktopIndex) return true;
             Native.GetWindowThreadProcessId(window, out uint pid);
             bool ownDialog = pid == Environment.ProcessId && (Native.GetWindowLongPtr(window, -16).ToInt64() & 0x00C00000) != 0;
             if (!Native.IsWindowVisible(window) || Native.IsIconic(window)
@@ -243,21 +267,28 @@ internal sealed class DesktopWidgets : IDisposable
             if ((style & (0x08000000 | 8)) != 0 || !ownDialog && (style & 0x80) != 0) return true;
             if (Native.DwmGetIntAttribute(window, 14, out int cloaked, sizeof(int)) == 0 && cloaked != 0) return true;
             Native.GetWindowRect(window, out var frame);
-            if (frame.Right - frame.Left >= 160 && frame.Bottom - frame.Top >= 100) after = window;
+            if (frame.Right - frame.Left >= 160 && frame.Bottom - frame.Top >= 100) { after = window; afterIndex = current; }
             return true;
         }, 0);
         foreach (var widget in windows.Values)
         {
+            // Associate only our own top-level windows with Explorer's desktop; they stay
+            // in the desktop group without entering the system's ordinary-app minimize list.
+            bool ownerChanged = desktop != 0 && Native.GetWindow(widget.Handle, 4) != desktop;
+            if (ownerChanged) Native.SetWindowLongPtr(widget.Handle, -8, desktop);
             if (Native.IsIconic(widget.Handle)) Native.ShowWindow(widget.Handle, 4);
-            Native.SetWindowPos(widget.Handle, after, 0, 0, 0, 0, 0x0413);
+            // Moving a window produces reorder notifications. An already-correct position must be
+            // a no-op, otherwise our own correction would keep scheduling itself indefinitely.
+            if (ownerChanged || !positions.TryGetValue(widget.Handle, out int position) || position <= afterIndex || position >= desktopIndex)
+                Native.SetWindowPos(widget.Handle, after, 0, 0, 0, 0, 0x0613);
         }
     }
     internal void RestackForChecks() => Restack();
     public void Dispose()
     {
         if (disposed) return; disposed = true; weatherGeneration++;
-        clockTimer.Stop(); weatherTimer.Stop(); cancellation.Cancel(); cancellation.Dispose(); weatherService.Dispose();
-        if (foregroundHook != 0) Native.UnhookWinEvent(foregroundHook);
+        clockTimer.Stop(); weatherTimer.Stop(); restackTimer.Stop(); cancellation.Cancel(); cancellation.Dispose(); weatherService.Dispose();
+        foreach (nint hook in windowHooks) if (hook != 0) Native.UnhookWinEvent(hook);
         foreach (var window in windows.Values) window.Close(); windows.Clear();
     }
 }

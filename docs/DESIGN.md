@@ -1,12 +1,16 @@
 # Dock 交互与当前实现
 
-当前源码以 0.1.0-preview.33 为准，公开测试版为 0.1.0-preview.28。preview.2 的启动动效和窗口位置调整已按用户要求移除。
+当前源码以 0.1.0-preview.34 为准，公开测试版为 0.1.0-preview.28。preview.2 的启动动效和窗口位置调整已按用户要求移除。
 
 ## 系统桌面切换
 
 preview.33 按用户选择使用 Windows 自带的 Win + D，在“外观与动画 → 显示与桌面”中展示“显示桌面 / 恢复窗口”说明。按一次显示桌面，再按一次恢复先前窗口；状态与恢复行为由 Windows 管理。接口与按键说明见 [Windows 官方快捷键文档](https://support.microsoft.com/en-us/accessibility/windows/keyboard-shortcuts-in-windows)。
 
 移除 preview.32 的全局注册、WM_HOTKEY 处理、Shell.MinimizeAll 调用、开关与冲突提示，不注册或拦截 Win + D，也不跟踪 / 注入按键。旧配置中的 DesktopHotkey 字段按未知字段忽略，其他设置继续载入；保存时不再写回该字段。没有新的计时器、键盘钩子或常驻对象；Dock 原有遮挡与底边唤出逻辑保持不变。
+
+preview.34 修复小组件在系统显示桌面时被覆盖的问题。通过包含 SHELLDLL_DefView 的顶层窗口识别 Explorer 桌面，仅使用 [GWLP_HWNDPARENT](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setwindowlongptrw) 修改本进程组件窗口的所有者；不将组件设为子窗口，不修改 Explorer 的窗口样式或过程。层级调整保留 NOACTIVATE / NOOWNERZORDER，不置顶、不移动其他应用。枚举只把桌面上方的普通应用作为组件的覆盖层，保持设置对话框也在组件上方。
+
+复用前台变化钩子，并监听桌面重排；合并到 Dispatcher 后立即校正，再以 300 ms 单次计时器处理 Shell 的后续变化。窗口已在正确位置时不再调用 SetWindowPos，避免自己的重排事件形成循环；空闲不轮询，暂停与退出停止计时并注销事件。桌面切换不会重新创建组件或保存配置；Explorer 重启等边界仍列为待验收。
 
 ## 音乐频谱
 

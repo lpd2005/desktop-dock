@@ -33,6 +33,7 @@ internal static class Native
     [DllImport("user32.dll")] internal static extern bool GetWindowRect(nint hwnd, out Rect rect);
     [DllImport("user32.dll")] internal static extern uint GetDpiForWindow(nint hwnd);
     [DllImport("user32.dll")] internal static extern nint GetForegroundWindow();
+    [DllImport("user32.dll")] internal static extern nint GetDesktopWindow();
     [DllImport("user32.dll")] internal static extern bool SetForegroundWindow(nint hwnd);
     [DllImport("user32.dll")] internal static extern bool AllowSetForegroundWindow(uint process);
     [DllImport("user32.dll")] internal static extern bool IsIconic(nint hwnd);

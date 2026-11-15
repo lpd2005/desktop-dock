@@ -8,6 +8,13 @@ namespace DesktopDock.App;
 
 internal sealed partial class Controller
 {
+    public async Task RunWidgetDesktopTest(bool inspect)
+    {
+        var checks = await WidgetDesktopChecks.Run(Path.Combine(data, "widget-desktop-checks"), inspect);
+        File.WriteAllText(Path.Combine(data, "widget-desktop-report.json"), JsonSerializer.Serialize(checks, new JsonSerializerOptions { WriteIndented = true }));
+        Quit();
+    }
+
     public async Task RunSpectrumTest(bool inspect)
     {
         dock.UseOcclusionWindowsForChecks(() => []);
